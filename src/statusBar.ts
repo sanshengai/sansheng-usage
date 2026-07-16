@@ -5,12 +5,31 @@ import { QuotaData } from './quota';
 const C_AMBER  = '#fbbf24';
 const C_RED    = '#f87171';
 
+const BAR_FULL  = '█';
+const BAR_EMPTY = '░';
+
+type StatusFormat = 'compact' | 'bar' | 'cost';
+
 function urgencyColor(quota: QuotaData | null): string | undefined {
   if (!quota) return undefined;
   const max = Math.max(quota.fiveHourUtilization, quota.sevenDayUtilization);
   if (max >= 0.9) return C_RED;
   if (max >= 0.7) return C_AMBER;
   return undefined;
+}
+
+/** Utilization 0…1 -> "███░░░". Clamps, so a maxed (>1) window renders full. */
+function bar(v: number, width: number): string {
+  const clamped = Math.min(Math.max(v, 0), 1);
+  const filled = Math.round(clamped * width);
+  return BAR_FULL.repeat(filled) + BAR_EMPTY.repeat(Math.max(0, width - filled));
+}
+
+function readConfig(): { format: StatusFormat; barWidth: number } {
+  const cfg = vscode.workspace.getConfiguration('clusage');
+  const format = cfg.get<StatusFormat>('statusBar.format', 'compact');
+  const barWidth = Math.min(Math.max(cfg.get<number>('statusBar.barWidth', 6), 3), 20);
+  return { format, barWidth };
 }
 
 export class StatusBarController {
@@ -44,15 +63,21 @@ export class StatusBarController {
 
     this.item.color = urgencyColor(quota);
 
-    if (quota) {
+    const { format, barWidth } = readConfig();
+
+    if (!quota || format === 'cost') {
+      // 'cost' is the user's choice; the !quota branch is a fallback — the quota
+      // fetch failed (no creds, offline, transient API error) but we still have
+      // real usage data, so show cost-only rather than stalling on the spinner.
+      if (!quota) this.item.color = undefined;
+      this.item.text = `$(graph) ${cost}`;
+    } else if (format === 'bar') {
+      this.item.text =
+        `$(graph) ${cost}  5h ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}` +
+        `  7d ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}`;
+    } else {
       const reset = timeUntil(quota.fiveHourResetAt);
       this.item.text = `$(graph) ${cost}  5h:${fmtPct(quota.fiveHourUtilization)} $(clock)${reset}  7d:${fmtPct(quota.sevenDayUtilization)}`;
-    } else {
-      // Quota fetch failed (no creds, offline, transient API error) but we
-      // still have real usage data — show cost-only instead of stalling on
-      // the spinner forever.
-      this.item.color = undefined;
-      this.item.text  = `$(graph) ${cost}`;
     }
 
     this.item.tooltip = buildTooltip(summary, quota);

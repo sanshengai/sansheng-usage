@@ -54,7 +54,39 @@
         "title": "Claude Usage: Open Dashboard",
         "icon": "$(graph)"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Clusage",
+      "properties": {
+        "clusage.statusBar.format": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "bar",
+            "cost"
+          ],
+          "enumDescriptions": [
+            "Cost, percentages and the 5h reset countdown. Example: $12.30  5h:40% 2h 10m  7d:22%",
+            "Cost with a progress bar per quota window. Example: $12.30  5h ###--- 40%  7d #----- 22%. Reset times move to the tooltip.",
+            "Cost only. Example: $12.30. Quota stays in the tooltip."
+          ],
+          "default": "compact",
+          "markdownDescription": "How the status bar item is rendered. Every variant keeps the full breakdown in the hover tooltip."
+        },
+        "clusage.statusBar.barWidth": {
+          "type": "number",
+          "default": 6,
+          "minimum": 3,
+          "maximum": 20,
+          "markdownDescription": "Width, in characters, of each quota bar. Only applies when `#clusage.statusBar.format#` is `bar`."
+        },
+        "clusage.sessions.showTitles": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Label rows in the dashboard's **Sessions** tab with the conversation title Claude Code records in the transcript, falling back to the project name when a session has no title yet. Turn off to always show the project name."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
