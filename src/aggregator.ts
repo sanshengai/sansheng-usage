@@ -1,4 +1,4 @@
-import { UsageRecord } from './parser';
+import { UsageRecord, SessionTitle, resolveSessionTitle } from './parser';
 
 export interface TokenBreakdown {
   input: number;
@@ -26,7 +26,8 @@ export interface ModelSummary {
 export interface SessionSummary {
   sessionId: string;
   projectPath: string;
-  displayName: string;
+  displayName: string; // project name — also drives the row's project colour
+  title?: string;      // conversation title from the transcript; undefined if none
   timestamp: Date;
   totalTokens: number;
   costUSD: number;
@@ -82,7 +83,11 @@ export function formatCost(usd: number): string {
 }
 
 function projectDisplayName(projectPath: string): string {
-  const parts = projectPath.split('/').filter(Boolean);
+  // Split on both separators: records take their path from the transcript's `cwd`,
+  // which on Windows is backslash-delimited (C:\Users\me\proj). Splitting on '/'
+  // alone left every Windows path un-shortened, so the whole absolute path was
+  // rendered as the "name".
+  const parts = projectPath.split(/[/\\]+/).filter(Boolean);
   if (parts.length === 0) return projectPath;
   if (parts.length === 1) return parts[0];
   // Show last 2 segments: "user/project"
@@ -110,7 +115,10 @@ function startOfWeek(d: Date): Date {
   return r;
 }
 
-export function aggregate(records: UsageRecord[]): UsageSummary {
+export function aggregate(
+  records: UsageRecord[],
+  titles?: Map<string, SessionTitle>
+): UsageSummary {
   const now = new Date();
   const todayStart = startOfDay(now).getTime();
   const weekStart = startOfWeek(now).getTime();
@@ -215,6 +223,7 @@ export function aggregate(records: UsageRecord[]): UsageSummary {
         sessionId: r.sessionId,
         projectPath: r.projectPath,
         displayName: projectDisplayName(r.projectPath),
+        title: resolveSessionTitle(titles?.get(r.sessionId)),
         timestamp: r.timestamp,
         totalTokens: 0,
         costUSD: 0,
