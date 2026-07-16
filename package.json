@@ -93,7 +93,7 @@
         "clusage.statusBar.colorOnHighUsage": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Tint the status bar amber once either quota window passes 70%, and red past 90%. Turn this off to keep the status bar in the theme's usual colour at any usage — the percentages and bars still say where you are, without the item changing colour to get your attention."
+          "markdownDescription": "Tint a quota window amber past 70% of its own utilization, orange past 80% and red past 90%. In `bar` mode each window tints independently and the cost is never tinted; the other formats render as one item, so they tint whole, off whichever window is further along. Turn this off to keep the status bar in the theme's usual colour at any usage — the percentages and bars still say where you are, without anything changing colour to get your attention."
         },
         "clusage.sessions.showTitles": {
           "type": "boolean",
