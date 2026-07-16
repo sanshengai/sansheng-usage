@@ -5,8 +5,25 @@ import { QuotaData } from './quota';
 let currentPanel: vscode.WebviewPanel | undefined;
 let extensionUri: vscode.Uri | undefined;
 
+// currentPanel can outlive the panel it points at: reinstalling or reloading the
+// extension with the dashboard open tears the panel down without onDidDispose
+// getting to run, leaving a handle onto a dead panel. Optional chaining does not
+// help — the handle is not undefined, it is disposed — and WebviewPanel exposes no
+// way to ask, so touching it is the only test there is. Every getter on a disposed
+// panel throws 'Webview is disposed'; read the cheapest one and catch that, and
+// nothing else, so a genuine rendering failure still surfaces as itself.
+function isDisposed(panel: vscode.WebviewPanel): boolean {
+  try {
+    void panel.visible;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export function showDashboard(context: vscode.ExtensionContext, summary: UsageSummary, quota: QuotaData | null): void {
   extensionUri = context.extensionUri;
+  if (currentPanel && isDisposed(currentPanel)) currentPanel = undefined;
   if (currentPanel) {
     currentPanel.reveal(vscode.ViewColumn.One);
     currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota);
@@ -21,6 +38,7 @@ export function showDashboard(context: vscode.ExtensionContext, summary: UsageSu
 }
 
 export function refreshDashboard(summary: UsageSummary, quota: QuotaData | null): void {
+  if (currentPanel && isDisposed(currentPanel)) currentPanel = undefined;
   if (currentPanel?.visible) {
     currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota);
   }
