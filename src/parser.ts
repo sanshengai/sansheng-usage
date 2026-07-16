@@ -17,6 +17,28 @@ export interface UsageRecord {
   costUSD: number;
 }
 
+// Claude Code names each conversation and stores it right in the transcript:
+//   {"type":"ai-title","aiTitle":"...","sessionId":"..."}       - auto-generated
+//   {"type":"custom-title","customTitle":"...","sessionId":"..."} - user-renamed
+// Both are rewritten on nearly every turn (hundreds of identical rows per file)
+// and the two coexist rather than replace each other, so a renamed session keeps
+// emitting its old ai-title. Last-one-wins per kind; custom beats ai at display
+// time (see resolveSessionTitle) because it is the user's explicit choice.
+export interface SessionTitle {
+  ai?: string;
+  custom?: string;
+}
+
+export interface ScanResult {
+  records: UsageRecord[];
+  titles: Map<string, SessionTitle>;
+}
+
+/** custom > ai > undefined. Callers fall back to the project name. */
+export function resolveSessionTitle(t: SessionTitle | undefined): string | undefined {
+  return t?.custom || t?.ai || undefined;
+}
+
 // Per-million-token prices: [input, output, cacheWrite5m, cacheWrite1h, cacheRead]
 // More-specific prefixes MUST come before broader ones (startsWith matching).
 const PRICING_TABLE: Array<[string, number, number, number, number, number]> = [
@@ -74,7 +96,11 @@ function computeCost(
   );
 }
 
-async function readJsonlFile(filePath: string, projectPath: string): Promise<UsageRecord[]> {
+async function readJsonlFile(
+  filePath: string,
+  projectPath: string,
+  titles: Map<string, SessionTitle>
+): Promise<UsageRecord[]> {
   const records: UsageRecord[] = [];
   // Claude Code appends the same final assistant message multiple times under different
   // outer UUIDs. Deduplicate by the inner message.id so each API response is counted once.
@@ -87,6 +113,23 @@ async function readJsonlFile(filePath: string, projectPath: string): Promise<Usa
     if (!line.trim()) continue;
     try {
       const obj = JSON.parse(line);
+
+      // Title rows carry their own sessionId and no usage — harvest and move on.
+      // Only main-session transcripts contain them; subagent transcripts under
+      // <sessionId>/subagents/ carry the parent sessionId on their usage rows, so
+      // their tokens roll up into the parent session without needing a title here.
+      if (obj.type === 'ai-title' || obj.type === 'custom-title') {
+        const sid: string = obj.sessionId ?? '';
+        const value: unknown = obj.type === 'ai-title' ? obj.aiTitle : obj.customTitle;
+        if (sid && typeof value === 'string' && value.trim()) {
+          const entry = titles.get(sid) ?? {};
+          if (obj.type === 'ai-title') entry.ai = value;
+          else entry.custom = value;
+          titles.set(sid, entry);
+        }
+        continue;
+      }
+
       if (obj.type !== 'assistant') continue;
 
       const msg = obj.message;
@@ -167,8 +210,11 @@ function collectJsonlFiles(dir: string): string[] {
   return out;
 }
 
-export async function scanAllProjects(): Promise<UsageRecord[]> {
+export async function scanAllProjects(): Promise<ScanResult> {
   const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+
+  const allRecords: UsageRecord[] = [];
+  const titles = new Map<string, SessionTitle>();
 
   let projectDirs: string[];
   try {
@@ -176,10 +222,8 @@ export async function scanAllProjects(): Promise<UsageRecord[]> {
       fs.statSync(path.join(claudeDir, d)).isDirectory()
     );
   } catch {
-    return [];
+    return { records: allRecords, titles };
   }
-
-  const allRecords: UsageRecord[] = [];
 
   for (const projectDir of projectDirs) {
     const projectPath = '/' + projectDir.replace(/^-/, '').replace(/-/g, '/');
@@ -187,7 +231,7 @@ export async function scanAllProjects(): Promise<UsageRecord[]> {
 
     for (const filePath of collectJsonlFiles(dirPath)) {
       try {
-        const records = await readJsonlFile(filePath, projectPath);
+        const records = await readJsonlFile(filePath, projectPath, titles);
         allRecords.push(...records);
       } catch {
         // Skip unreadable files
@@ -195,5 +239,5 @@ export async function scanAllProjects(): Promise<UsageRecord[]> {
     }
   }
 
-  return allRecords;
+  return { records: allRecords, titles };
 }

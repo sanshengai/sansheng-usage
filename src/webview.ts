@@ -182,9 +182,13 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
     costFmt: formatCost(p.costUSD),
   })));
 
+  // The dot stays coloured by project so sessions of one project still read as a
+  // group; only the label switches to the conversation title.
+  const showTitles = vscode.workspace.getConfiguration('clusage').get<boolean>('sessions.showTitles', true);
   const sessionsJson = JSON.stringify(recentSessions.map(s => ({
     color: projectColor(s.displayName),
     project: s.displayName,
+    name: (showTitles && s.title) ? s.title : s.displayName,
     model: modelShortName(s.model),
     cost: s.costUSD,
     costFmt: formatCost(s.costUSD),
@@ -622,13 +626,14 @@ function filterSessions(btn) {
 function renderSessions() {
   const q = (document.getElementById('sess-search') ? document.getElementById('sess-search').value : '').toLowerCase();
   const rows = SESSIONS.filter(s =>
-    (sessModel === 'All' || s.model === sessModel) && (!q || s.project.toLowerCase().includes(q))
+    (sessModel === 'All' || s.model === sessModel) &&
+    (!q || s.name.toLowerCase().includes(q) || s.project.toLowerCase().includes(q))
   );
   document.getElementById('sessions-list').innerHTML = rows.length
     ? rows.map(s =>
-        '<div class="session-row">' +
+        '<div class="session-row" title="' + esc(s.project) + '">' +
         '<span class="sess-dot" style="background:' + s.color + '"></span>' +
-        '<span class="sess-name">' + esc(s.project) + '</span>' +
+        '<span class="sess-name">' + esc(s.name) + '</span>' +
         '<span class="tag">' + esc(s.model) + '</span>' +
         '<div class="sess-right">' +
         '<span class="sess-cost">' + s.costFmt + '</span>' +
