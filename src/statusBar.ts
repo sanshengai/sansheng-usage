@@ -88,11 +88,13 @@ export class StatusBarController {
     } else if (format === 'bar') {
       // Reset countdowns are opt-in here: compact already shows the 5h reset, but
       // bar drops it for space, so showResets lets bar-mode users get both back.
-      const r5 = showResets ? ` ${timeUntil(quota.fiveHourResetAt)}` : '';
-      const r7 = showResets ? ` ${timeUntil(quota.sevenDayResetAt)}` : '';
+      // Each countdown sits with the window it describes rather than trailing its
+      // percentage, where '71% 1h 54m' reads as if the 71% were what expires.
+      const r5 = showResets ? ` (${timeUntil(quota.fiveHourResetAt)})` : '';
+      const r7 = showResets ? ` (${timeUntil(quota.sevenDayResetAt)})` : '';
       this.item.text =
-        `${head}  5h ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}${r5}` +
-        `  7d ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}${r7}`;
+        `${head}  5h${r5} ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}` +
+        `  7d${r7} ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}`;
     } else {
       const reset = timeUntil(quota.fiveHourResetAt);
       const r7 = showResets ? ` $(clock)${timeUntil(quota.sevenDayResetAt)}` : '';

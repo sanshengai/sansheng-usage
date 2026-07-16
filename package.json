@@ -83,7 +83,7 @@
         "clusage.statusBar.showResets": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Append each quota window's reset countdown after its percentage. In `bar` mode this adds both the 5h and 7d countdowns (bar drops them for space by default); in `compact` mode it adds the 7d countdown next to the 5h one that is always shown."
+          "markdownDescription": "Show each quota window's reset countdown beside the window it belongs to. In `bar` mode this adds both the 5h and 7d countdowns, parenthesized after their labels (bar drops them for space by default); in `compact` mode it adds the 7d countdown next to the 5h one that is always shown."
         },
         "clusage.statusBar.showTodayTokens": {
           "type": "boolean",
