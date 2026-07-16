@@ -90,6 +90,11 @@
           "default": false,
           "markdownDescription": "Show today's total token count next to the cost in the status bar (e.g. `$12.30 · 1.2M`). Applies to every format."
         },
+        "clusage.statusBar.colorOnHighUsage": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Tint the status bar amber once either quota window passes 70%, and red past 90%. Turn this off to keep the status bar in the theme's usual colour at any usage — the percentages and bars still say where you are, without the item changing colour to get your attention."
+        },
         "clusage.sessions.showTitles": {
           "type": "boolean",
           "default": true,

@@ -30,6 +30,7 @@ interface StatusConfig {
   barWidth: number;
   showResets: boolean;
   showTodayTokens: boolean;
+  colorOnHighUsage: boolean;
 }
 
 function readConfig(): StatusConfig {
@@ -38,7 +39,8 @@ function readConfig(): StatusConfig {
   const barWidth = Math.min(Math.max(cfg.get<number>('statusBar.barWidth', 6), 3), 20);
   const showResets = cfg.get<boolean>('statusBar.showResets', false);
   const showTodayTokens = cfg.get<boolean>('statusBar.showTodayTokens', false);
-  return { format, barWidth, showResets, showTodayTokens };
+  const colorOnHighUsage = cfg.get<boolean>('statusBar.colorOnHighUsage', true);
+  return { format, barWidth, showResets, showTodayTokens, colorOnHighUsage };
 }
 
 export class StatusBarController {
@@ -70,9 +72,9 @@ export class StatusBarController {
       v < 0.1    ? `${(v * 100).toFixed(1)}%` :
                    `${Math.round(v * 100)}%`;
 
-    this.item.color = urgencyColor(quota);
+    const { format, barWidth, showResets, showTodayTokens, colorOnHighUsage } = readConfig();
 
-    const { format, barWidth, showResets, showTodayTokens } = readConfig();
+    this.item.color = colorOnHighUsage ? urgencyColor(quota) : undefined;
 
     // Optional today's-token suffix on the cost, shared by every format.
     const head = showTodayTokens
