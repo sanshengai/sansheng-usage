@@ -80,6 +80,16 @@
           "maximum": 20,
           "markdownDescription": "Width, in characters, of each quota bar. Only applies when `#clusage.statusBar.format#` is `bar`."
         },
+        "clusage.statusBar.showResets": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Append each quota window's reset countdown after its percentage. In `bar` mode this adds both the 5h and 7d countdowns (bar drops them for space by default); in `compact` mode it adds the 7d countdown next to the 5h one that is always shown."
+        },
+        "clusage.statusBar.showTodayTokens": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show today's total token count next to the cost in the status bar (e.g. `$12.30 · 1.2M`). Applies to every format."
+        },
         "clusage.sessions.showTitles": {
           "type": "boolean",
           "default": true,

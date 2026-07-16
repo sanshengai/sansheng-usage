@@ -25,11 +25,20 @@ function bar(v: number, width: number): string {
   return BAR_FULL.repeat(filled) + BAR_EMPTY.repeat(Math.max(0, width - filled));
 }
 
-function readConfig(): { format: StatusFormat; barWidth: number } {
+interface StatusConfig {
+  format: StatusFormat;
+  barWidth: number;
+  showResets: boolean;
+  showTodayTokens: boolean;
+}
+
+function readConfig(): StatusConfig {
   const cfg = vscode.workspace.getConfiguration('clusage');
   const format = cfg.get<StatusFormat>('statusBar.format', 'compact');
   const barWidth = Math.min(Math.max(cfg.get<number>('statusBar.barWidth', 6), 3), 20);
-  return { format, barWidth };
+  const showResets = cfg.get<boolean>('statusBar.showResets', false);
+  const showTodayTokens = cfg.get<boolean>('statusBar.showTodayTokens', false);
+  return { format, barWidth, showResets, showTodayTokens };
 }
 
 export class StatusBarController {
@@ -63,21 +72,31 @@ export class StatusBarController {
 
     this.item.color = urgencyColor(quota);
 
-    const { format, barWidth } = readConfig();
+    const { format, barWidth, showResets, showTodayTokens } = readConfig();
+
+    // Optional today's-token suffix on the cost, shared by every format.
+    const head = showTodayTokens
+      ? `$(graph) ${cost} · ${formatTokenCount(summary.todayTokens)}`
+      : `$(graph) ${cost}`;
 
     if (!quota || format === 'cost') {
       // 'cost' is the user's choice; the !quota branch is a fallback — the quota
       // fetch failed (no creds, offline, transient API error) but we still have
       // real usage data, so show cost-only rather than stalling on the spinner.
       if (!quota) this.item.color = undefined;
-      this.item.text = `$(graph) ${cost}`;
+      this.item.text = head;
     } else if (format === 'bar') {
+      // Reset countdowns are opt-in here: compact already shows the 5h reset, but
+      // bar drops it for space, so showResets lets bar-mode users get both back.
+      const r5 = showResets ? ` ${timeUntil(quota.fiveHourResetAt)}` : '';
+      const r7 = showResets ? ` ${timeUntil(quota.sevenDayResetAt)}` : '';
       this.item.text =
-        `$(graph) ${cost}  5h ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}` +
-        `  7d ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}`;
+        `${head}  5h ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}${r5}` +
+        `  7d ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}${r7}`;
     } else {
       const reset = timeUntil(quota.fiveHourResetAt);
-      this.item.text = `$(graph) ${cost}  5h:${fmtPct(quota.fiveHourUtilization)} $(clock)${reset}  7d:${fmtPct(quota.sevenDayUtilization)}`;
+      const r7 = showResets ? ` $(clock)${timeUntil(quota.sevenDayResetAt)}` : '';
+      this.item.text = `${head}  5h:${fmtPct(quota.fiveHourUtilization)} $(clock)${reset}  7d:${fmtPct(quota.sevenDayUtilization)}${r7}`;
     }
 
     this.item.tooltip = buildTooltip(summary, quota);
