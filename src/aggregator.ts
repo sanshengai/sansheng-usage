@@ -156,6 +156,9 @@ export function aggregate(
   const modelMap = new Map<string, ModelSummary>();
   // For sessions: group by sessionId
   const sessionMap = new Map<string, SessionSummary>();
+  // When each session's model was last set from a main-loop record, so a later one
+  // can replace it. Loop bookkeeping, so it stays out of SessionSummary.
+  const modelStamp = new Map<string, Date>();
 
   for (const r of records) {
     const t = r.timestamp.getTime();
@@ -217,7 +220,9 @@ export function aggregate(
     mod.costUSD += r.costUSD;
     mod.requestCount += 1;
 
-    // Session grouping - keep only last record per session for timestamp/model
+    // Session grouping. Tokens, cost and the activity timestamp roll up from every
+    // record, subagents included: their spend and their work belong to the session
+    // that launched them.
     if (!sessionMap.has(r.sessionId)) {
       sessionMap.set(r.sessionId, {
         sessionId: r.sessionId,
@@ -227,15 +232,27 @@ export function aggregate(
         timestamp: r.timestamp,
         totalTokens: 0,
         costUSD: 0,
-        model: r.model,
+        model: r.model, // provisional; the main-loop pass below settles it
       });
     }
     const sess = sessionMap.get(r.sessionId)!;
     sess.totalTokens += tokens;
     sess.costUSD += r.costUSD;
-    if (r.timestamp > sess.timestamp) {
-      sess.timestamp = r.timestamp;
-      sess.model = r.model;
+    if (r.timestamp > sess.timestamp) sess.timestamp = r.timestamp;
+
+    // The model does not roll up the same way. It labels who is on the other end of
+    // the conversation, so only main-loop records are eligible: subagent rows carry
+    // the launching session's id, and a subagent that finishes after the last reply
+    // would otherwise relabel the whole session with its own model. That misreads
+    // badly when subagents run a different model from the conversation — the badge
+    // then names a model the session mostly did not use, for no reason the user can
+    // see. Sessions with nothing but subagent records keep the provisional model.
+    if (!r.isSidechain) {
+      const at = modelStamp.get(r.sessionId);
+      if (!at || r.timestamp > at) {
+        modelStamp.set(r.sessionId, r.timestamp);
+        sess.model = r.model;
+      }
     }
   }
 

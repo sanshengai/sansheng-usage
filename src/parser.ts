@@ -8,6 +8,12 @@ export interface UsageRecord {
   sessionId: string;
   projectPath: string;
   model: string;
+  /**
+   * True for rows a subagent produced. Those carry the sessionId of the
+   * conversation that launched them, so they are indistinguishable from the main
+   * conversation's own rows by sessionId alone.
+   */
+  isSidechain: boolean;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -172,6 +178,8 @@ async function readJsonlFile(
         sessionId: obj.sessionId ?? '',
         projectPath: projectDir,
         model,
+        // Absent on old transcripts, where nothing was a subagent anyway.
+        isSidechain: obj.isSidechain === true,
         inputTokens,
         outputTokens,
         cacheReadTokens,
