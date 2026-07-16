@@ -12,16 +12,42 @@ let lastSummary: UsageSummary | undefined;
 let lastQuota: QuotaData | null = null;
 let extContext: vscode.ExtensionContext | undefined;
 
-async function refreshUsage(): Promise<void> {
+let usageScanPromise: Promise<void> | undefined;
+let usageScanQueued = false;
+
+async function doRefreshUsage(): Promise<void> {
   try {
-    const records = await scanAllProjects();
-    lastSummary = aggregate(records);
+    const { records, titles } = await scanAllProjects();
+    lastSummary = aggregate(records, titles);
     extContext?.globalState.update('lastSummary', lastSummary);
     statusBar?.update(lastSummary, lastQuota);
     refreshDashboard(lastSummary, lastQuota);
   } catch (err) {
     console.error('[clusage] usage refresh error:', err);
   }
+}
+
+// A full scan walks every transcript under ~/.claude/projects, which on a large
+// history is seconds of I/O. The file watcher fires on every JSONL append, so
+// unguarded calls used to overlap: a new scan started while the previous was
+// still reading, piling up concurrent walks over the same tree. Coalesce to one
+// scan in flight plus at most one queued rerun, so the newest write is never
+// dropped and the work never stacks. Callers still get a promise that resolves
+// when fresh data has landed (the dashboard command awaits this).
+function refreshUsage(): Promise<void> {
+  if (usageScanPromise) {
+    usageScanQueued = true;
+    return usageScanPromise;
+  }
+  const p = doRefreshUsage().finally(() => {
+    usageScanPromise = undefined;
+    if (usageScanQueued) {
+      usageScanQueued = false;
+      void refreshUsage();
+    }
+  });
+  usageScanPromise = p;
+  return p;
 }
 
 let resetRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -142,6 +168,16 @@ export function activate(context: vscode.ExtensionContext): void {
   watcher.onDidChange(debouncedRefresh, null, context.subscriptions);
   watcher.onDidCreate(debouncedRefresh, null, context.subscriptions);
   context.subscriptions.push(watcher);
+
+  // Re-render on settings changes so format/title toggles apply without a reload.
+  // Cheap: both consumers read from the cached summary, no rescan.
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (!e.affectsConfiguration('clusage')) return;
+    if (lastSummary) {
+      statusBar?.update(lastSummary, lastQuota);
+      refreshDashboard(lastSummary, lastQuota);
+    }
+  }, null, context.subscriptions);
 
   // Poll quota every 5 minutes as a fallback when Claude Code is idle
   const quotaInterval = setInterval(() => refreshQuota(), 5 * 60 * 1000);
