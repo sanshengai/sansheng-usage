@@ -8,6 +8,12 @@ const C_RED    = '#f87171';
 const BAR_FULL  = '█';
 const BAR_EMPTY = '░';
 
+// VS Code lays a status bar item out as a flex row, which collapses a run of plain
+// spaces down to one even though the CSS asks for white-space: pre
+// (microsoft/vscode#145852). A lone space is never collapsed, so only the wider
+// separators between groups need non-breaking spaces to survive.
+const GAP = '\u00a0\u00a0\u00a0';
+
 type StatusFormat = 'compact' | 'bar' | 'cost';
 
 function urgencyColor(quota: QuotaData | null): string | undefined {
@@ -92,11 +98,11 @@ export class StatusBarController {
       // bar drops it for space, so showResets lets bar-mode users get both back.
       // Each countdown sits with the window it describes rather than trailing its
       // percentage, where '71% 1h 54m' reads as if the 71% were what expires.
-      const r5 = showResets ? ` (${timeUntil(quota.fiveHourResetAt)})` : '';
-      const r7 = showResets ? ` (${timeUntil(quota.sevenDayResetAt)})` : '';
+      const r5 = showResets ? `「${timeUntil(quota.fiveHourResetAt)}」` : '';
+      const r7 = showResets ? `「${timeUntil(quota.sevenDayResetAt)}」` : '';
       this.item.text =
-        `${head}  5h${r5} ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}` +
-        `  7d${r7} ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}`;
+        `${head}${GAP}5h${r5} ${bar(quota.fiveHourUtilization, barWidth)} ${fmtPct(quota.fiveHourUtilization)}` +
+        `${GAP}7d${r7} ${bar(quota.sevenDayUtilization, barWidth)} ${fmtPct(quota.sevenDayUtilization)}`;
     } else {
       const reset = timeUntil(quota.fiveHourResetAt);
       const r7 = showResets ? ` $(clock)${timeUntil(quota.sevenDayResetAt)}` : '';
