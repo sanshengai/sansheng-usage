@@ -95,6 +95,15 @@ function projectDisplayName(projectPath: string): string {
   return parts.slice(-2).join('/');
 }
 
+function projectKeyOf(projectPath: string): string {
+  // Windows filesystems are case-insensitive, and Claude Code writes `cwd` with an
+  // inconsistent drive-letter case — 'c:\Users\...' from one launch, 'C:\Users\...'
+  // from the next. Grouping on the raw string therefore split one project into two
+  // rows and halved its cost. POSIX paths ARE case-sensitive, so only fold strings
+  // that look like Windows absolute paths.
+  return /^[a-zA-Z]:[\\/]/.test(projectPath) ? projectPath.toLowerCase() : projectPath;
+}
+
 function startOfDay(d: Date): Date {
   const r = new Date(d);
   r.setHours(0, 0, 0, 0);
@@ -195,7 +204,7 @@ export function aggregate(
     datesWithUsage.add(startOfDay(r.timestamp).getTime());
 
     // Project grouping
-    const projectKey = r.projectPath;
+    const projectKey = projectKeyOf(r.projectPath);
     if (!projectMap.has(projectKey)) {
       projectMap.set(projectKey, {
         projectPath: r.projectPath,
@@ -259,9 +268,11 @@ export function aggregate(
     }
   }
 
-  // Count sessions per project
+  // Count sessions per project. Must look up through the same normalization the map
+  // was keyed with — a raw-path lookup missed every project whose records carried a
+  // differently-cased drive letter, leaving it showing "0 sessions" beside a real cost.
   for (const sess of sessionMap.values()) {
-    const proj = projectMap.get(sess.projectPath);
+    const proj = projectMap.get(projectKeyOf(sess.projectPath));
     if (proj) proj.sessionCount++;
   }
 
