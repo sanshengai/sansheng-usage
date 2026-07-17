@@ -190,6 +190,16 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
 
   const totalToday = todayTokenBreakdown.input + todayTokenBreakdown.output + todayTokenBreakdown.cacheRead + todayTokenBreakdown.cacheWrite;
   const totalAllTime = tokenBreakdown.input + tokenBreakdown.output + tokenBreakdown.cacheRead + tokenBreakdown.cacheWrite;
+
+  // Cache hit rate: of the prompt-side tokens (fresh input + cache writes + cache
+  // reads), the share served from cache. High means context is being reused
+  // efficiently, which is most of where the cost savings on a long session come
+  // from. Output tokens aren't prompt-side, so they're left out of the base.
+  const cacheRate = (bd: typeof tokenBreakdown) => {
+    const promptSide = bd.input + bd.cacheRead + bd.cacheWrite;
+    return promptSide > 0 ? bd.cacheRead / promptSide : 0;
+  };
+  const cachePct = (bd: typeof tokenBreakdown) => `${Math.round(cacheRate(bd) * 100)}% cached`;
   const totalModelCost = byModel.reduce((s, m) => s + m.costUSD, 0);
   const totalModelTokens = byModel.reduce((s, m) => s + m.totalTokens, 0);
   const totalRequests = byModel.reduce((s, m) => s + m.requestCount, 0);
@@ -544,7 +554,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
   <div class="section">
     <div class="sec-header">
       <span class="sec-title">Today's Tokens</span>
-      <span class="sec-meta">total ${formatTokenCount(totalToday)}</span>
+      <span class="sec-meta">total ${formatTokenCount(totalToday)} · ${cachePct(todayTokenBreakdown)}</span>
     </div>
     <div class="token-grid">${tokenGrid(todayTokenBreakdown, totalToday, 'today')}</div>
   </div>
@@ -596,7 +606,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
   <div class="section">
     <div class="sec-header">
       <span class="sec-title">All-Time Tokens</span>
-      <span class="sec-meta">total ${formatTokenCount(totalAllTime)}</span>
+      <span class="sec-meta">total ${formatTokenCount(totalAllTime)} · ${cachePct(tokenBreakdown)}</span>
     </div>
     <div class="token-grid">${tokenGrid(tokenBreakdown, totalAllTime, 'total')}</div>
   </div>
