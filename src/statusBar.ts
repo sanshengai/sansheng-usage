@@ -98,7 +98,10 @@ export class StatusBarController {
       return;
     }
 
-    const cost = formatCost(summary.todayCost);
+    // hideCost redacts the dollar amount everywhere but leaves tokens and quota %
+    // visible, so the status bar is safe to show on a stream or screenshot.
+    const hideCost = vscode.workspace.getConfiguration('clusage').get<boolean>('hideCost', false);
+    const cost = hideCost ? '$•••' : formatCost(summary.todayCost);
 
     const fmtPct = (v: number) =>
       v > 1      ? 'maxed' :
@@ -150,7 +153,7 @@ export class StatusBarController {
       this.main.text = `${head}  5h:${fmtPct(quota.fiveHourUtilization)} $(clock)${reset}  7d:${fmtPct(quota.sevenDayUtilization)}${r7}`;
     }
 
-    const tooltip = buildTooltip(summary, quota);
+    const tooltip = buildTooltip(summary, quota, hideCost);
     for (const item of this.items) item.tooltip = tooltip;
   }
 
@@ -159,7 +162,8 @@ export class StatusBarController {
   }
 }
 
-function buildTooltip(summary: UsageSummary, quota: QuotaData | null): vscode.MarkdownString {
+function buildTooltip(summary: UsageSummary, quota: QuotaData | null, hideCost: boolean): vscode.MarkdownString {
+  const money = (n: number) => (hideCost ? '$•••' : formatCost(n));
   const fmtDelta = (current: number, ref: number): string => {
     if (ref === 0) return '-';
     const pct = ((current - ref) / ref) * 100;
@@ -175,7 +179,7 @@ function buildTooltip(summary: UsageSummary, quota: QuotaData | null): vscode.Ma
   const lines: string[] = [
     `**Today's Usage (API Cost)**`,
     ``,
-    `💰 Cost: **${formatCost(summary.todayCost)}**`,
+    `💰 Cost: **${money(summary.todayCost)}**`,
     `🔢 Tokens: ${formatTokenCount(summary.todayTokens)}`,
     `💬 Messages: ${summary.todayMessages}`,
   ];
@@ -196,7 +200,7 @@ function buildTooltip(summary: UsageSummary, quota: QuotaData | null): vscode.Ma
     `🔥 Streak: ${summary.streakDays} day${summary.streakDays !== 1 ? 's' : ''}`,
     ``,
     `---`,
-    `All Time: **${formatCost(summary.allTimeCost)}**`,
+    `All Time: **${money(summary.allTimeCost)}**`,
     ``,
     `*Click to open dashboard*`,
   );

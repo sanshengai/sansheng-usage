@@ -90,6 +90,11 @@
           "default": false,
           "markdownDescription": "Show today's total token count next to the cost in the status bar (e.g. `$12.30 · 1.2M`). Applies to every format."
         },
+        "clusage.hideCost": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Redact every dollar amount in the status bar and dashboard, replacing it with `$•••`. Tokens, percentages and quota bars stay visible, so the dashboard is safe to screenshot, stream or present without exposing spend."
+        },
         "clusage.statusBar.colorOnHighUsage": {
           "type": "boolean",
           "default": true,

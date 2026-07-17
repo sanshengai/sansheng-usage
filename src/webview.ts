@@ -139,6 +139,12 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
   const { tokenBreakdown, todayTokenBreakdown, byProject, byModel, recentSessions,
     prevWeekCost, prevMonthCost } = summary;
 
+  // hideCost masks every dollar figure — the usage stays visible (tokens, %, bars),
+  // only the money is redacted — so the dashboard is safe to screenshot or stream.
+  const hideCost = vscode.workspace.getConfiguration('clusage').get<boolean>('hideCost', false);
+  const money = (n: number) => (hideCost ? '$•••' : formatCost(n));
+  const heroMoney = (n: number) => (hideCost ? '$•••' : heroVal(n));
+
 
   const totalToday = todayTokenBreakdown.input + todayTokenBreakdown.output + todayTokenBreakdown.cacheRead + todayTokenBreakdown.cacheWrite;
   const totalAllTime = tokenBreakdown.input + tokenBreakdown.output + tokenBreakdown.cacheRead + tokenBreakdown.cacheWrite;
@@ -188,7 +194,9 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
       const shortId = m.model.replace('claude-', '');
       const costStr = m.costUSD.toFixed(2);
       const dot = costStr.indexOf('.');
-      const costHtml = `$${costStr.slice(0, dot)}<span class="model-cost-dec">${costStr.slice(dot)}</span>`;
+      const costHtml = hideCost
+        ? '$•••'
+        : `$${costStr.slice(0, dot)}<span class="model-cost-dec">${costStr.slice(dot)}</span>`;
       return `
       <div class="model-card${fullWidth ? ' model-card-full' : ''}" style="animation-delay:${i * 60}ms">
         <div class="model-card-left">
@@ -206,26 +214,35 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
   }
 
   // JSON for JS sort/filter — script-safe because it lands inside an inline <script>.
-  const projectsJson = jsonForScript(byProject.slice(0, 30).map(p => ({
+  // The client only ever sorts by `cost` and sizes a share bar from it, both purely
+  // relative, so under hideCost we ship each item's share of the total (scaled to an
+  // integer) instead of the dollar amount — the DOM then carries no spend, not even
+  // in source, while sort order and bar proportions are preserved exactly.
+  const topProjects = byProject.slice(0, 30);
+  const projTotal = topProjects.reduce((s, p) => s + p.costUSD, 0) || 1;
+  const maskCostNum = (usd: number, total: number) =>
+    hideCost ? Math.round((usd / total) * 1_000_000) : usd;
+  const projectsJson = jsonForScript(topProjects.map(p => ({
     color: projectColor(p.displayName),
     name: p.displayName,
     sessions: p.sessionCount,
     tokens: p.totalTokens,
     tokensFmt: formatTokenCount(p.totalTokens),
-    cost: p.costUSD,
-    costFmt: formatCost(p.costUSD),
+    cost: maskCostNum(p.costUSD, projTotal),
+    costFmt: money(p.costUSD),
   })));
 
   // The dot stays coloured by project so sessions of one project still read as a
   // group; only the label switches to the conversation title.
   const showTitles = vscode.workspace.getConfiguration('clusage').get<boolean>('sessions.showTitles', true);
+  const sessTotal = recentSessions.reduce((s, x) => s + x.costUSD, 0) || 1;
   const sessionsJson = jsonForScript(recentSessions.map(s => ({
     color: projectColor(s.displayName),
     project: s.displayName,
     name: (showTitles && s.title) ? s.title : s.displayName,
     model: modelShortName(s.model),
-    cost: s.costUSD,
-    costFmt: formatCost(s.costUSD),
+    cost: maskCostNum(s.costUSD, sessTotal),
+    costFmt: money(s.costUSD),
     tokens: s.totalTokens,
     tokensFmt: formatTokenCount(s.totalTokens),
     time: relativeTime(s.timestamp),
@@ -460,22 +477,22 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
   <div class="hero-grid">
     <div class="hero-card" style="animation-delay:0ms">
       <div class="hero-label">All Time</div>
-      <div class="hero-value">${heroVal(summary.allTimeCost)}</div>
+      <div class="hero-value">${heroMoney(summary.allTimeCost)}</div>
       <div class="hero-sub">${formatTokenCount(summary.allTimeTokens)} tokens</div>
     </div>
     <div class="hero-card today" style="animation-delay:50ms">
       <div class="hero-label">Today</div>
-      <div class="hero-value">${heroVal(summary.todayCost)}</div>
+      <div class="hero-value">${heroMoney(summary.todayCost)}</div>
       <div class="hero-sub">${formatTokenCount(summary.todayTokens)} tokens</div>
     </div>
     <div class="hero-card" style="animation-delay:100ms">
       <div class="hero-label">This Week</div>
-      <div class="hero-value">${heroVal(summary.weekCost)}</div>
+      <div class="hero-value">${heroMoney(summary.weekCost)}</div>
       <div class="hero-sub">7-day window</div>
     </div>
     <div class="hero-card" style="animation-delay:150ms">
       <div class="hero-label">This Month</div>
-      <div class="hero-value">${heroVal(summary.monthCost)}</div>
+      <div class="hero-value">${heroMoney(summary.monthCost)}</div>
       <div class="hero-sub">Calendar month</div>
     </div>
   </div>
@@ -496,7 +513,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
           <span class="quota-label">Current Session</span>
           <span class="quota-win-label">5H WINDOW</span>
         </div>
-        <div class="quota-cost">${formatCost(summary.lastFiveHours.cost)}</div>
+        <div class="quota-cost">${money(summary.lastFiveHours.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastFiveHours.tokens)} tokens</div>
         ${quota ? `<div class="q-track"><div class="q-fill ${fiveClass}" style="width:${fivePct}%"></div></div>
         <div class="quota-footer"><span>${timeUntil(quota.fiveHourResetAt)}</span>${fmtPct(fivePct, fiveClass)}</div>` : ''}
@@ -506,7 +523,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
           <span class="quota-label">Weekly</span>
           <span class="quota-win-label">7D WINDOW</span>
         </div>
-        <div class="quota-cost">${formatCost(summary.lastWeek.cost)}</div>
+        <div class="quota-cost">${money(summary.lastWeek.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastWeek.tokens)} tokens</div>
         ${quota ? `<div class="q-track"><div class="q-fill ${sevenClass}" style="width:${sevenPct}%"></div></div>
         <div class="quota-footer"><span>${timeUntil(quota.sevenDayResetAt)}</span>${fmtPct(sevenPct, sevenClass)}</div>` : ''}
@@ -516,7 +533,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
           <span class="quota-label">Last Hour</span>
           <span class="quota-win-label">60M WINDOW</span>
         </div>
-        <div class="quota-cost">${formatCost(summary.lastHour.cost)}</div>
+        <div class="quota-cost">${money(summary.lastHour.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastHour.tokens)} tokens</div>
       </div>
     </div>
@@ -525,7 +542,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
   <div class="section">
     <div class="sec-header">
       <span class="sec-title">By Model</span>
-      <span class="sec-meta">${formatCost(totalModelCost)} total · ${formatTokenCount(totalModelTokens)} tokens</span>
+      <span class="sec-meta">${money(totalModelCost)} total · ${formatTokenCount(totalModelTokens)} tokens</span>
     </div>
     <div class="model-grid">${modelCards(false)}</div>
   </div>
@@ -589,7 +606,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
   <div class="model-summary-grid">
     <div class="model-summary-card" style="animation-delay:0ms">
       <div class="model-summary-label">Total Spend</div>
-      <div class="model-summary-value" style="color:var(--orange)">${heroVal(totalModelCost)}</div>
+      <div class="model-summary-value" style="color:var(--orange)">${heroMoney(totalModelCost)}</div>
       <div class="model-summary-sub">${byModel.length} model${byModel.length !== 1 ? 's' : ''}</div>
     </div>
     <div class="model-summary-card" style="animation-delay:60ms">
@@ -600,7 +617,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
     <div class="model-summary-card" style="animation-delay:120ms">
       <div class="model-summary-label">Requests</div>
       <div class="model-summary-value" style="color:var(--accent)">${totalRequests.toLocaleString()}</div>
-      <div class="model-summary-sub">avg ${formatCost(avgCostPerReq)} per req</div>
+      <div class="model-summary-sub">avg ${money(avgCostPerReq)} per req</div>
     </div>
   </div>
   <div class="sec-header" style="margin-bottom:10px"><span class="sec-title">Detail</span></div>
