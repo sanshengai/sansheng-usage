@@ -108,6 +108,18 @@ async function readJsonlFile(
   titles: Map<string, SessionTitle>
 ): Promise<UsageRecord[]> {
   const records: UsageRecord[] = [];
+
+  // A real transcript is a few MB at most (the largest seen in practice is single
+  // digits). A file orders of magnitude larger is corrupt — most dangerously one
+  // written as a single enormous line, which readline would buffer whole into
+  // memory before we could look at it. Skip such files rather than risk the OOM.
+  const MAX_FILE_BYTES = 200 * 1024 * 1024;
+  try {
+    if (fs.statSync(filePath).size > MAX_FILE_BYTES) return records;
+  } catch {
+    return records;
+  }
+
   // Claude Code appends the same final assistant message multiple times under different
   // outer UUIDs. Deduplicate by the inner message.id so each API response is counted once.
   const seenMsgIds = new Set<string>();
@@ -226,9 +238,13 @@ export async function scanAllProjects(): Promise<ScanResult> {
 
   let projectDirs: string[];
   try {
-    projectDirs = fs.readdirSync(claudeDir).filter(d =>
-      fs.statSync(path.join(claudeDir, d)).isDirectory()
-    );
+    // withFileTypes reads each entry's type from the directory read itself, so a
+    // single entry vanishing or being unreadable mid-scan can't throw the way a
+    // per-entry statSync could — which used to abort the whole scan and blank the
+    // dashboard, rather than just skipping the one directory.
+    projectDirs = fs.readdirSync(claudeDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name);
   } catch {
     return { records: allRecords, titles };
   }
