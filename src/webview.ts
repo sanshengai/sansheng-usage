@@ -180,23 +180,75 @@ function projectionLine(p: QuotaProjection | null): string {
 // each row reads as one weekday, like the contribution graph.
 function heatmap(daily: number[], hideCost: boolean): string {
   const DAY = 86400_000;
-  const max = Math.max(...daily, 0);
+  // Shade by quantile among the days that had activity, not as a fraction of the busiest
+  // day. A single outlier (one big batch run) otherwise flattens every ordinary day into
+  // the bottom level and the grid renders as one flat block of colour — which is exactly
+  // what it did. Quantiles put a quarter of the active days in each level, so the shading
+  // always carries contrast whatever the spread. Still relative, never a dollar figure,
+  // so it stays safe under hideCost.
+  const ranked = daily.filter((v) => v > 0).sort((a, b) => a - b);
+  const q = (p: number): number =>
+    ranked.length ? ranked[Math.min(ranked.length - 1, Math.floor(ranked.length * p))] : 0;
+  const q1 = q(0.25);
+  const q2 = q(0.5);
+  const q3 = q(0.75);
   const bucket = (v: number): number => {
     if (v <= 0) return 0;
-    if (max <= 0) return 1;
-    const r = v / max;
-    return r < 0.25 ? 1 : r < 0.5 ? 2 : r < 0.75 ? 3 : 4;
+    if (v <= q1) return 1;
+    if (v <= q2) return 2;
+    if (v <= q3) return 3;
+    return 4;
   };
   const now = Date.now();
-  const pad = new Date(now - (daily.length - 1) * DAY).getDay();
+  const dayOf = (i: number): Date => new Date(now - (daily.length - 1 - i) * DAY);
+  const pad = dayOf(0).getDay();
+
   const cells: string[] = [];
   for (let i = 0; i < pad; i++) cells.push('<div class="hm-cell hm-pad"></div>');
   for (let i = 0; i < daily.length; i++) {
-    const label = new Date(now - (daily.length - 1 - i) * DAY).toLocaleDateString();
+    const label = dayOf(i).toLocaleDateString();
     const title = hideCost ? label : `${label} · ${formatCost(daily[i])}`;
     cells.push(`<div class="hm-cell hm-l${bucket(daily[i])}" title="${escHtml(title)}"></div>`);
   }
-  return `<div class="heatmap-scroll"><div class="heatmap">${cells.join('')}</div></div>`;
+
+  // A month marker sits above the column whose first day opens a new month, so the
+  // 90-day span reads as dates instead of an anonymous grid.
+  const cols = Math.ceil((pad + daily.length) / 7);
+  const months: string[] = [];
+  let seen = -1;
+  for (let c = 0; c < cols; c++) {
+    const i = c * 7 - pad;
+    if (i < 0 || i >= daily.length) continue;
+    const m = dayOf(i).getMonth();
+    if (m === seen) continue;
+    seen = m;
+    months.push(`<span class="hm-mon" style="grid-column:${c + 1}">${m + 1}月</span>`);
+  }
+
+  // The two figures the grid can show but never states outright.
+  const active = daily.filter((v) => v > 0).length;
+  let run = 0;
+  let best = 0;
+  for (const v of daily) {
+    run = v > 0 ? run + 1 : 0;
+    if (run > best) best = run;
+  }
+  const swatches = [0, 1, 2, 3, 4].map((l) => `<i class="hm-cell hm-l${l}"></i>`).join('');
+
+  return `<div class="hm-wrap">
+    <div class="hm-plot">
+      <div class="hm-mons" style="grid-template-columns:repeat(${cols},var(--hm-c))">${months.join('')}</div>
+      <div class="hm-body">
+        <div class="hm-wd"><span></span><span>一</span><span></span><span>三</span><span></span><span>五</span><span></span></div>
+        <div class="heatmap">${cells.join('')}</div>
+      </div>
+    </div>
+    <div class="hm-side">
+      <div class="hm-fig"><b>${active}</b><span>天有活动 · 共 ${daily.length} 天</span></div>
+      <div class="hm-fig"><b>${best}</b><span>天最长连续</span></div>
+      <div class="hm-legend">少${swatches}多</div>
+    </div>
+  </div>`;
 }
 
 function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaData | null): string {
@@ -453,14 +505,30 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 .quota-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 .quota-proj { font-size: 10.5px; color: var(--muted); margin-top: 6px; opacity: .85; }
 .proj-warn { color: var(--rose); font-weight: 600; }
-.heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
-.heatmap { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px; gap: 3px; width: max-content; }
-.hm-cell { width: 12px; height: 12px; border-radius: 2px; }
+/* --hm-c is the column pitch: the cell plus its gap. The month row and the grid share
+   it so a marker lands exactly over its column. */
+.hm-wrap { --hm-c: 21px; display: flex; align-items: flex-start; gap: 44px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; overflow-x: auto; }
+.hm-plot { width: max-content; }
+.hm-mons { display: grid; margin-left: 22px; margin-bottom: 6px; height: 12px; }
+.hm-mon { font-size: 10px; color: var(--fg-dim); white-space: nowrap; letter-spacing: .02em; }
+.hm-body { display: flex; gap: 7px; }
+.hm-wd { display: grid; grid-template-rows: repeat(7, 18px); gap: 3px; width: 15px; }
+.hm-wd span { font-size: 10px; line-height: 18px; color: var(--fg-dim); }
+.heatmap { display: grid; grid-template-rows: repeat(7, 18px); grid-auto-flow: column; grid-auto-columns: 18px; gap: 3px; width: max-content; }
+.hm-cell { width: 18px; height: 18px; border-radius: 3px; }
 .hm-pad { visibility: hidden; }
+.hm-side { display: flex; flex-direction: column; gap: 14px; padding-top: 18px; }
+.hm-fig { display: flex; align-items: baseline; gap: 7px; }
+.hm-fig b { font-size: 22px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
+.hm-fig span { font-size: 11px; color: var(--fg-mute); }
+.hm-legend { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--fg-dim); margin-top: 2px; }
+.hm-legend i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+.hm-legend i:first-of-type { margin-left: 4px; }
+.hm-legend i:last-of-type { margin-right: 4px; }
 .hm-l0 { background: var(--border); }
-.hm-l1 { background: rgba(94, 234, 212, .28); }
-.hm-l2 { background: rgba(94, 234, 212, .5); }
-.hm-l3 { background: rgba(94, 234, 212, .74); }
+.hm-l1 { background: rgba(94, 234, 212, .16); }
+.hm-l2 { background: rgba(94, 234, 212, .38); }
+.hm-l3 { background: rgba(94, 234, 212, .66); }
 .hm-l4 { background: rgba(94, 234, 212, 1); }
 .quota-pct.ok     { color: var(--accent2); font-weight: 600; }
 .quota-pct.warn   { color: var(--amber); font-weight: 600; }
