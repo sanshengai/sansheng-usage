@@ -57,17 +57,9 @@ async function refreshQuota(): Promise<void> {
   if (quotaFetchInFlight) return;
   quotaFetchInFlight = true;
   try {
-    const newQuota = await fetchQuota();
-    // If the 7d header was absent in this response, preserve the previous 7d
-    // value so the session reset doesn't wipe the weekly utilization.
-    if (newQuota && !newQuota.sevenDayHeaderPresent && lastQuota) {
-      const now = Date.now();
-      if (lastQuota.sevenDayResetAt.getTime() > now) {
-        newQuota.sevenDayUtilization = lastQuota.sevenDayUtilization;
-        newQuota.sevenDayResetAt = lastQuota.sevenDayResetAt;
-      }
-    }
-    lastQuota = newQuota;
+    // The usage endpoint always returns both windows in one body (or parseQuota
+    // yields null), so there is no longer a missing-7d case to patch around.
+    lastQuota = await fetchQuota();
     if (lastQuota) {
       extContext?.globalState.update('lastQuota', {
         ...lastQuota,

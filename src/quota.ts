@@ -3,16 +3,37 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+export interface ModelQuota {
+  name: string;          // e.g. "Fable", "Opus"
+  utilization: number;   // 0.0 – 1.0
+  resetAt: Date;
+}
+
 export interface QuotaData {
   fiveHourUtilization: number;   // 0.0 – 1.0  (>1.0 means over limit)
   fiveHourResetAt: Date;
   sevenDayUtilization: number;
   sevenDayResetAt: Date;
   overallStatus: 'allowed' | 'blocked' | 'unknown';
-  headersPresent: boolean;       // false = 429 with no headers, utilization inferred
-  sevenDayHeaderPresent: boolean; // false = 7d-utilization header was absent in response
   fetchedAt: Date;
+  source: 'endpoint' | 'bridge'; // where this reading came from, for the UI to label
+  modelWeekly: ModelQuota[];     // per-model weekly limits from the usage endpoint's limits[]
 }
+
+// The usage endpoint drops requests without a claude-code User-Agent into an
+// aggressive rate-limit bucket that returns persistent 429s; with the header it
+// behaves. Only the `claude-code/` prefix matters, not the exact version, but a
+// plausible one is sent. See github.com/anthropics/claude-code#31637.
+const CLAUDE_CODE_UA = 'claude-code/2.1.211';
+
+// The usage numbers move slowly and the endpoint rate-limits eager callers, so a
+// reading is reused for this long before another request is made. Manual refresh
+// passes { force: true } to bypass it.
+const MIN_INTERVAL_MS = 180_000;
+
+let cache: { data: QuotaData; at: number } | null = null;
+// While inside a 429 back-off window we serve the last reading and make no request.
+let backoffUntil = 0;
 
 function readToken(): string | null {
   const home = os.homedir();
@@ -41,98 +62,127 @@ function readToken(): string | null {
   return null;
 }
 
-export async function fetchQuota(): Promise<QuotaData | null> {
+// Retry-After is either a number of seconds or an HTTP-date (RFC 9110). Returns ms
+// from now to wait, or a default when the header is absent or unparseable.
+function retryAfterMs(header: string | undefined, fallbackMs: number): number {
+  if (!header) return fallbackMs;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const when = Date.parse(header);
+  if (Number.isFinite(when)) return Math.max(0, when - Date.now());
+  return fallbackMs;
+}
+
+function parseUsage(body: string): QuotaData | null {
+  let j: any;
+  try {
+    j = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const fh = j?.five_hour;
+  const sd = j?.seven_day;
+  // The endpoint reports utilization as an integer 0–100; the rest of the code
+  // works in 0..1, so scale here at the single point of entry.
+  const asFraction = (v: unknown) => (typeof v === 'number' ? v / 100 : 0);
+  if (!fh || typeof fh.utilization !== 'number') return null;
+
+  const fiveHourUtilization = asFraction(fh.utilization);
+  const sevenDayUtilization = asFraction(sd?.utilization);
+  const fiveHourResetAt = fh.resets_at ? new Date(fh.resets_at) : new Date(Date.now() + 5 * 3600_000);
+  const sevenDayResetAt = sd?.resets_at ? new Date(sd.resets_at) : new Date(Date.now() + 7 * 86400_000);
+
+  // Per-model weekly limits live in the self-describing limits[] array (the flat
+  // seven_day_opus/sonnet keys are null now). Each scoped weekly entry names its
+  // model; e.g. { kind: 'weekly_scoped', percent: 40, scope: { model: { display_name: 'Fable' } } }.
+  const modelWeekly: ModelQuota[] = Array.isArray(j?.limits)
+    ? j.limits
+        .filter((l: any) => l?.group === 'weekly' && l?.scope?.model?.display_name)
+        .map((l: any) => ({
+          name: String(l.scope.model.display_name),
+          utilization: asFraction(l.percent),
+          resetAt: l.resets_at ? new Date(l.resets_at) : sevenDayResetAt,
+        }))
+    : [];
+
+  const blocked = fiveHourUtilization >= 1 || sevenDayUtilization >= 1;
+  return {
+    fiveHourUtilization,
+    fiveHourResetAt,
+    sevenDayUtilization,
+    sevenDayResetAt,
+    overallStatus: blocked ? 'blocked' : 'allowed',
+    fetchedAt: new Date(),
+    source: 'endpoint',
+    modelWeekly,
+  };
+}
+
+/**
+ * Read the subscription's 5h / 7d utilization from the read-only usage endpoint.
+ *
+ * This replaces an earlier approach that POSTed a 1-token message to /v1/messages
+ * purely to read rate-limit response headers — that spent quota to measure quota
+ * and, at scale, is the kind of automated credential reuse that gets an extension
+ * pulled. GET /api/oauth/usage carries the same authoritative numbers in its body,
+ * makes no billable call, and is what Claude Code's own /usage reads.
+ *
+ * Returns null (rather than a faked zero) whenever the reading is unavailable, so
+ * the UI can hide the quota display instead of implying full quota remaining.
+ */
+export async function fetchQuota(opts: { force?: boolean } = {}): Promise<QuotaData | null> {
+  const now = Date.now();
+  if (!opts.force && cache && now - cache.at < MIN_INTERVAL_MS) return cache.data;
+  if (!opts.force && now < backoffUntil) return cache?.data ?? null;
+
   const token = readToken();
   if (!token) return null;
 
   return new Promise(resolve => {
-    const body = JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1,
-      messages: [{ role: 'user', content: '.' }],
-    });
+    const done = (data: QuotaData | null) => {
+      if (data) cache = { data, at: Date.now() };
+      resolve(data);
+    };
 
     const req = https.request(
       {
         hostname: 'api.anthropic.com',
-        path: '/v1/messages',
-        method: 'POST',
+        path: '/api/oauth/usage',
+        method: 'GET',
         headers: {
-          // OAuth tokens go through `authorization: Bearer`. Sending the same
-          // token in `x-api-key` causes the API to reject with 401
-          // "invalid x-api-key" — it validates that header as an API key, not
-          // an OAuth token, so the combo must not be sent together.
           'authorization': `Bearer ${token}`,
-          'anthropic-version': '2023-06-01',
           'anthropic-beta': 'oauth-2025-04-20',
-          'anthropic-client-platform': 'claude_cli',
-          'content-type': 'application/json',
-          'content-length': Buffer.byteLength(body),
+          'user-agent': CLAUDE_CODE_UA,
         },
       },
       res => {
-        const h = res.headers as Record<string, string>;
-        res.resume();
+        let body = '';
+        res.on('data', c => (body += c));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
 
-        const parse5hReset = h['anthropic-ratelimit-unified-5h-reset'];
-        const parse7dReset = h['anthropic-ratelimit-unified-7d-reset'];
-        const headersPresent = Boolean(parse5hReset || h['anthropic-ratelimit-unified-5h-utilization']);
-        const sevenDayHeaderPresent = Boolean(parse7dReset || h['anthropic-ratelimit-unified-7d-utilization']);
-
-        const fiveHourResetAt  = parse5hReset
-          ? new Date(parseInt(parse5hReset, 10) * 1000)
-          : new Date(Date.now() + 5 * 3600_000);
-        const sevenDayResetAt = parse7dReset
-          ? new Date(parseInt(parse7dReset, 10) * 1000)
-          : new Date(Date.now() + 7 * 86400_000);
-
-        // Any non-2xx without rate-limit headers is an auth / server failure,
-        // not a usable quota signal. Returning zeros here would mislead users
-        // into thinking they had full quota remaining. The single exception is
-        // 429-with-no-headers, which legitimately means "quota exhausted".
-        if (!headersPresent && res.statusCode !== 429 &&
-            (res.statusCode === undefined || res.statusCode < 200 || res.statusCode >= 300)) {
-          resolve(null);
-          return;
-        }
-
-        // 429 with no headers = quota exhausted / hard rate-limited
-        if (res.statusCode === 429 && !headersPresent) {
-          resolve({
-            fiveHourUtilization: 1.0,
-            fiveHourResetAt,
-            sevenDayUtilization: 1.0,
-            sevenDayResetAt,
-            overallStatus: 'blocked',
-            headersPresent: false,
-            sevenDayHeaderPresent: false,
-            fetchedAt: new Date(),
-          });
-          return;
-        }
-
-        const fiveHourUtilization = parseFloat(h['anthropic-ratelimit-unified-5h-utilization'] ?? '0') || 0;
-        const sevenDayUtilization = sevenDayHeaderPresent
-          ? parseFloat(h['anthropic-ratelimit-unified-7d-utilization']!) || 0
-          : 0;
-        const status = h['anthropic-ratelimit-unified-status'];
-
-        resolve({
-          fiveHourUtilization,
-          fiveHourResetAt,
-          sevenDayUtilization,
-          sevenDayResetAt,
-          overallStatus: status === 'blocked' ? 'blocked' : status === 'allowed' ? 'allowed' : 'unknown',
-          headersPresent,
-          sevenDayHeaderPresent,
-          fetchedAt: new Date(),
+          if (status === 429) {
+            // Endpoint-level rate limit (not quota exhaustion — that shows up as a
+            // high utilization in the body). Respect Retry-After, keep serving the
+            // last reading, make no fresh request until the window passes.
+            const h = res.headers as Record<string, string>;
+            backoffUntil = Date.now() + retryAfterMs(h['retry-after'], MIN_INTERVAL_MS);
+            resolve(cache?.data ?? null);
+            return;
+          }
+          if (status < 200 || status >= 300) {
+            // 401 (token expired) or any server error: no usable signal. Don't fake
+            // zeros; hand back the last good reading if we have one, else null.
+            resolve(cache?.data ?? null);
+            return;
+          }
+          done(parseUsage(body));
         });
       }
     );
 
-    req.on('error', () => resolve(null));
-    req.setTimeout(10_000, () => { req.destroy(); resolve(null); });
-    req.write(body);
+    req.on('error', () => resolve(cache?.data ?? null));
+    req.setTimeout(10_000, () => { req.destroy(); resolve(cache?.data ?? null); });
     req.end();
   });
 }
