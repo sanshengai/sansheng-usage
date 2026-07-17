@@ -132,7 +132,7 @@ export function activate(context: vscode.ExtensionContext): void {
       showDashboard(context, lastSummary, lastQuota);
     } else {
       vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'Loading Claude usage data…' },
+        { location: vscode.ProgressLocation.Notification, title: '正在加载 Claude 用量数据…' },
         async () => {
           await Promise.all([refreshUsage(), refreshQuota()]);
           if (lastSummary) showDashboard(context, lastSummary, lastQuota);

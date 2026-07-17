@@ -74,7 +74,7 @@ export class StatusBarController {
     this.sevenItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
     for (const item of this.items) item.command = 'clusage.openPanel';
     this.main.text    = '$(sync~spin) Claude...';
-    this.main.tooltip = 'Claude Usage - loading…';
+    this.main.tooltip = 'Claude 用量 - 加载中…';
     this.main.show();
   }
 
@@ -93,8 +93,8 @@ export class StatusBarController {
     if (summary.todayTokens === 0) {
       this.hideWindows();
       this.main.color   = undefined;
-      this.main.text    = '$(sync~spin) Waiting for Claude...';
-      this.main.tooltip = 'No Claude Code usage today yet';
+      this.main.text    = '$(sync~spin) 等待 Claude…';
+      this.main.tooltip = '今天还没有 Claude Code 用量';
       return;
     }
 
@@ -104,7 +104,7 @@ export class StatusBarController {
     const cost = hideCost ? '$•••' : formatCost(summary.todayCost);
 
     const fmtPct = (v: number) =>
-      v > 1      ? 'maxed' :
+      v > 1      ? '已满' :
       v < 0.0005 ? '0%' :
       v < 0.001  ? '<0.1%' :
       v < 0.1    ? `${(v * 100).toFixed(1)}%` :
@@ -171,38 +171,38 @@ function buildTooltip(summary: UsageSummary, quota: QuotaData | null, hideCost: 
   };
 
   const fmtPct = (v: number) =>
-    v > 1     ? '**Maxed**' :
+    v > 1     ? '**已满**' :
     v < 0.001 ? '0%' :
     v < 0.1   ? `${(v * 100).toFixed(1)}%` :
                 `${Math.round(v * 100)}%`;
 
   const lines: string[] = [
-    `**Today's Usage (API Cost)**`,
+    `**今日用量（API 花费）**`,
     ``,
-    `💰 Cost: **${money(summary.todayCost)}**`,
-    `🔢 Tokens: ${formatTokenCount(summary.todayTokens)}`,
-    `💬 Messages: ${summary.todayMessages}`,
+    `💰 花费: **${money(summary.todayCost)}**`,
+    `🔢 Token: ${formatTokenCount(summary.todayTokens)}`,
+    `💬 消息: ${summary.todayMessages}`,
   ];
 
   if (quota) {
     lines.push(
       ``,
       `---`,
-      `⚡ **Quota**`,
-      `· Session (5h): **${fmtPct(quota.fiveHourUtilization)}** - resets in ${timeUntil(quota.fiveHourResetAt)}`,
-      `· Weekly  (7d): **${fmtPct(quota.sevenDayUtilization)}** - resets in ${timeUntil(quota.sevenDayResetAt)}`,
+      `⚡ **额度**`,
+      `· 会话 (5h): **${fmtPct(quota.fiveHourUtilization)}** · ${timeUntil(quota.fiveHourResetAt)}后重置`,
+      `· 周 (7d): **${fmtPct(quota.sevenDayUtilization)}** · ${timeUntil(quota.sevenDayResetAt)}后重置`,
     );
   }
 
   lines.push(
     ``,
     `---`,
-    `🔥 Streak: ${summary.streakDays} day${summary.streakDays !== 1 ? 's' : ''}`,
+    `🔥 连续 ${summary.streakDays} 天`,
     ``,
     `---`,
-    `All Time: **${money(summary.allTimeCost)}**`,
+    `累计: **${money(summary.allTimeCost)}**`,
     ``,
-    `*Click to open dashboard*`,
+    `*点击打开看板*`,
   );
 
   const md = new vscode.MarkdownString(lines.join('\n\n'));

@@ -168,9 +168,9 @@ function humanDur(ms: number): string {
 function projectionLine(p: QuotaProjection | null): string {
   if (!p) return '';
   const full = p.fullInMs !== null
-    ? ` <span class="proj-warn">⚠ full in ${humanDur(p.fullInMs)}</span>`
+    ? ` <span class="proj-warn">⚠ ${humanDur(p.fullInMs)} 后触顶</span>`
     : '';
-  return `<div class="quota-proj">~${p.ratePerHour.toFixed(0)}%/h · ~${p.projectedPct.toFixed(0)}% by reset${full}</div>`;
+  return `<div class="quota-proj">~${p.ratePerHour.toFixed(0)}%/h · ~${p.projectedPct.toFixed(0)}% 窗口末${full}</div>`;
 }
 
 // GitHub-style activity grid over the last 90 days. Each cell is one day, shaded by
@@ -225,7 +225,7 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
     const promptSide = bd.input + bd.cacheRead + bd.cacheWrite;
     return promptSide > 0 ? bd.cacheRead / promptSide : 0;
   };
-  const cachePct = (bd: typeof tokenBreakdown) => `${Math.round(cacheRate(bd) * 100)}% cached`;
+  const cachePct = (bd: typeof tokenBreakdown) => `${Math.round(cacheRate(bd) * 100)}% 命中缓存`;
   const totalModelCost = byModel.reduce((s, m) => s + m.costUSD, 0);
   const totalModelTokens = byModel.reduce((s, m) => s + m.totalTokens, 0);
   const totalRequests = byModel.reduce((s, m) => s + m.requestCount, 0);
@@ -246,10 +246,10 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
 
   function tokenGrid(bd: typeof tokenBreakdown, total: number, label: string): string {
     const items = [
-      { label: 'Input',       val: bd.input,      color: '#7c6af7' },
-      { label: 'Output',      val: bd.output,     color: '#4ade80' },
-      { label: 'Cache read',  val: bd.cacheRead,  color: '#5eead4' },
-      { label: 'Cache write', val: bd.cacheWrite, color: '#fbbf24' },
+      { label: '输入',       val: bd.input,      color: '#7c6af7' },
+      { label: '输出',      val: bd.output,     color: '#4ade80' },
+      { label: '缓存读',  val: bd.cacheRead,  color: '#5eead4' },
+      { label: '缓存写', val: bd.cacheWrite, color: '#fbbf24' },
     ];
     return items.map((item, i) => {
       const p = pct(item.val, total);
@@ -547,17 +547,17 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
     </div>
   </div>
   <div class="topbar-right">
-    <div class="live-badge"><span class="live-dot"></span>live</div>
-    <span class="updated">Updated ${new Date(summary.lastUpdated).toLocaleTimeString()}</span>
+    <div class="live-badge"><span class="live-dot"></span>实时</div>
+    <span class="updated">更新于 ${new Date(summary.lastUpdated).toLocaleTimeString()}</span>
   </div>
 </div>
 
 <!-- Tabs -->
 <nav class="tabs">
-  <button class="tab-btn active" data-tab="overview"  onclick="switchTab('overview')">⊞ Overview</button>
-  <button class="tab-btn"        data-tab="projects"  onclick="switchTab('projects')">☰ Projects <span class="tab-count">${byProject.length}</span></button>
-  <button class="tab-btn"        data-tab="sessions"  onclick="switchTab('sessions')">◷ Sessions <span class="tab-count">${recentSessions.length}</span></button>
-  <button class="tab-btn"        data-tab="models"    onclick="switchTab('models')">▣ Models <span class="tab-count">${byModel.length}</span></button>
+  <button class="tab-btn active" data-tab="overview"  onclick="switchTab('overview')">⊞ 总览</button>
+  <button class="tab-btn"        data-tab="projects"  onclick="switchTab('projects')">☰ 项目 <span class="tab-count">${byProject.length}</span></button>
+  <button class="tab-btn"        data-tab="sessions"  onclick="switchTab('sessions')">◷ 会话 <span class="tab-count">${recentSessions.length}</span></button>
+  <button class="tab-btn"        data-tab="models"    onclick="switchTab('models')">▣ 模型 <span class="tab-count">${byModel.length}</span></button>
 </nav>
 
 <!-- ═══ OVERVIEW ═══ -->
@@ -565,54 +565,54 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 
   <div class="hero-grid">
     <div class="hero-card" style="animation-delay:0ms">
-      <div class="hero-label">All Time</div>
+      <div class="hero-label">累计</div>
       <div class="hero-value">${heroMoney(summary.allTimeCost)}</div>
       <div class="hero-sub">${formatTokenCount(summary.allTimeTokens)} tokens</div>
     </div>
     <div class="hero-card today" style="animation-delay:50ms">
-      <div class="hero-label">Today</div>
+      <div class="hero-label">今日</div>
       <div class="hero-value">${heroMoney(summary.todayCost)}</div>
       <div class="hero-sub">${formatTokenCount(summary.todayTokens)} tokens</div>
     </div>
     <div class="hero-card" style="animation-delay:100ms">
-      <div class="hero-label">This Week</div>
+      <div class="hero-label">本周</div>
       <div class="hero-value">${heroMoney(summary.weekCost)}</div>
-      <div class="hero-sub">7-day window</div>
+      <div class="hero-sub">7 天窗口</div>
     </div>
     <div class="hero-card" style="animation-delay:150ms">
-      <div class="hero-label">This Month</div>
+      <div class="hero-label">本月</div>
       <div class="hero-value">${heroMoney(summary.monthCost)}</div>
-      <div class="hero-sub">Calendar month</div>
+      <div class="hero-sub">自然月</div>
     </div>
   </div>
 
   <div class="section">
     <div class="sec-header">
-      <span class="sec-title">Today's Tokens</span>
-      <span class="sec-meta">total ${formatTokenCount(totalToday)} · ${cachePct(todayTokenBreakdown)}</span>
+      <span class="sec-title">今日 Token</span>
+      <span class="sec-meta">共 ${formatTokenCount(totalToday)} · ${cachePct(todayTokenBreakdown)}</span>
     </div>
     <div class="token-grid">${tokenGrid(todayTokenBreakdown, totalToday, 'today')}</div>
   </div>
 
   <div class="section">
-    <div class="sec-header"><span class="sec-title">Usage Windows &amp; Quota</span></div>
+    <div class="sec-header"><span class="sec-title">用量窗口与额度</span></div>
     <div class="quota-grid">
       <div class="quota-card" style="animation-delay:0ms">
         <div class="quota-card-header">
-          <span class="quota-label">Current Session</span>
-          <span class="quota-win-label">5H WINDOW</span>
+          <span class="quota-label">当前会话</span>
+          <span class="quota-win-label">5 小时</span>
         </div>
         <div class="quota-cost">${money(summary.lastFiveHours.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastFiveHours.tokens)} tokens</div>
         ${quota ? `<div class="q-track"><div class="q-fill ${fiveClass}" style="width:${fivePct}%"></div></div>
         <div class="quota-footer"><span>${timeUntil(quota.fiveHourResetAt)}</span>${fmtPct(fivePct, fiveClass)}</div>
         ${projectionLine(projectQuota(quota.fiveHourUtilization, quota.fiveHourResetAt, 5 * 3600_000))}
-        ${typeof quota.contextPct === 'number' ? `<div class="quota-proj">context ${Math.round(quota.contextPct)}% full</div>` : ''}` : ''}
+        ${typeof quota.contextPct === 'number' ? `<div class="quota-proj">上下文占用 ${Math.round(quota.contextPct)}%</div>` : ''}` : ''}
       </div>
       <div class="quota-card" style="animation-delay:60ms">
         <div class="quota-card-header">
-          <span class="quota-label">Weekly</span>
-          <span class="quota-win-label">7D WINDOW</span>
+          <span class="quota-label">本周</span>
+          <span class="quota-win-label">7 天</span>
         </div>
         <div class="quota-cost">${money(summary.lastWeek.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastWeek.tokens)} tokens</div>
@@ -622,8 +622,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
       </div>
       <div class="quota-card" style="animation-delay:120ms">
         <div class="quota-card-header">
-          <span class="quota-label">Last Hour</span>
-          <span class="quota-win-label">60M WINDOW</span>
+          <span class="quota-label">最近一小时</span>
+          <span class="quota-win-label">60 分钟</span>
         </div>
         <div class="quota-cost">${money(summary.lastHour.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastHour.tokens)} tokens</div>
@@ -633,24 +633,24 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 
   <div class="section">
     <div class="sec-header">
-      <span class="sec-title">Activity</span>
-      <span class="sec-meta">last 90 days</span>
+      <span class="sec-title">活动</span>
+      <span class="sec-meta">近 90 天</span>
     </div>
     ${heatmap(summary.dailyCost, hideCost)}
   </div>
 
   <div class="section">
     <div class="sec-header">
-      <span class="sec-title">By Model</span>
-      <span class="sec-meta">${money(totalModelCost)} total · ${formatTokenCount(totalModelTokens)} tokens</span>
+      <span class="sec-title">模型分布</span>
+      <span class="sec-meta">${money(totalModelCost)} 共 · ${formatTokenCount(totalModelTokens)} tokens</span>
     </div>
     <div class="model-grid">${modelCards(false)}</div>
   </div>
 
   <div class="section">
     <div class="sec-header">
-      <span class="sec-title">All-Time Tokens</span>
-      <span class="sec-meta">total ${formatTokenCount(totalAllTime)} · ${cachePct(tokenBreakdown)}</span>
+      <span class="sec-title">累计 Token</span>
+      <span class="sec-meta">共 ${formatTokenCount(totalAllTime)} · ${cachePct(tokenBreakdown)}</span>
     </div>
     <div class="token-grid">${tokenGrid(tokenBreakdown, totalAllTime, 'total')}</div>
   </div>
@@ -660,24 +660,24 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 <!-- ═══ PROJECTS ═══ -->
 <div id="tab-projects" class="panel hidden">
   <div class="sec-header" style="margin-bottom:14px">
-    <span class="sec-title">Projects</span>
-    <span class="sec-meta">${byProject.length} active</span>
+    <span class="sec-title">项目</span>
+    <span class="sec-meta">${byProject.length} 个</span>
   </div>
   <div class="tab-controls">
-    <input class="search-input" id="proj-search" placeholder="Filter projects…" oninput="renderProjects()"/>
-    <button class="sort-btn active" id="sort-cost"     onclick="sortProjects('cost')">↓ Cost</button>
-    <button class="sort-btn"        id="sort-tokens"   onclick="sortProjects('tokens')">↓ Tokens</button>
-    <button class="sort-btn"        id="sort-sessions" onclick="sortProjects('sessions')">↓ Sessions</button>
-    <button class="sort-btn"        id="sort-name"     onclick="sortProjects('name')">↓ Name</button>
+    <input class="search-input" id="proj-search" placeholder="筛选项目…" oninput="renderProjects()"/>
+    <button class="sort-btn active" id="sort-cost"     onclick="sortProjects('cost')">↓ 花费</button>
+    <button class="sort-btn"        id="sort-tokens"   onclick="sortProjects('tokens')">↓ Token</button>
+    <button class="sort-btn"        id="sort-sessions" onclick="sortProjects('sessions')">↓ 会话</button>
+    <button class="sort-btn"        id="sort-name"     onclick="sortProjects('name')">↓ 名称</button>
   </div>
   <div class="table-wrap">
     <table class="proj-table">
       <thead><tr>
-        <th>Project</th>
-        <th class="right">Sessions</th>
-        <th class="right">Tokens</th>
-        <th class="right">Cost</th>
-        <th>Share of Spend</th>
+        <th>项目</th>
+        <th class="right">会话</th>
+        <th class="right">Token</th>
+        <th class="right">花费</th>
+        <th>花费占比</th>
       </tr></thead>
       <tbody id="proj-tbody"></tbody>
     </table>
@@ -687,11 +687,11 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 <!-- ═══ SESSIONS ═══ -->
 <div id="tab-sessions" class="panel hidden">
   <div class="sec-header" style="margin-bottom:14px">
-    <span class="sec-title">Recent Sessions</span>
-    <span class="sec-meta">${recentSessions.length} sessions</span>
+    <span class="sec-title">最近会话</span>
+    <span class="sec-meta">${recentSessions.length} 个会话</span>
   </div>
   <div class="tab-controls">
-    <input class="search-input" id="sess-search" placeholder="Filter sessions…" oninput="renderSessions()"/>
+    <input class="search-input" id="sess-search" placeholder="筛选会话…" oninput="renderSessions()"/>
     <div class="model-pills">${modelPills}</div>
   </div>
   <div class="sessions-wrap" id="sessions-list"></div>
@@ -700,27 +700,27 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 <!-- ═══ MODELS ═══ -->
 <div id="tab-models" class="panel hidden">
   <div class="sec-header" style="margin-bottom:14px">
-    <span class="sec-title">By Model</span>
-    <span class="sec-meta">${byModel.length} model${byModel.length !== 1 ? 's' : ''} · ${totalRequests.toLocaleString()} requests</span>
+    <span class="sec-title">模型分布</span>
+    <span class="sec-meta">${byModel.length} 个模型 · ${totalRequests.toLocaleString()} 次请求</span>
   </div>
   <div class="model-summary-grid">
     <div class="model-summary-card" style="animation-delay:0ms">
-      <div class="model-summary-label">Total Spend</div>
+      <div class="model-summary-label">总花费</div>
       <div class="model-summary-value" style="color:var(--orange)">${heroMoney(totalModelCost)}</div>
-      <div class="model-summary-sub">${byModel.length} model${byModel.length !== 1 ? 's' : ''}</div>
+      <div class="model-summary-sub">${byModel.length} 个模型</div>
     </div>
     <div class="model-summary-card" style="animation-delay:60ms">
-      <div class="model-summary-label">Total Tokens</div>
+      <div class="model-summary-label">总 Token</div>
       <div class="model-summary-value" style="color:var(--accent2)">${formatTokenCount(totalModelTokens)}</div>
-      <div class="model-summary-sub">input + output + cache</div>
+      <div class="model-summary-sub">输入 + 输出 + 缓存</div>
     </div>
     <div class="model-summary-card" style="animation-delay:120ms">
-      <div class="model-summary-label">Requests</div>
+      <div class="model-summary-label">请求数</div>
       <div class="model-summary-value" style="color:var(--accent)">${totalRequests.toLocaleString()}</div>
-      <div class="model-summary-sub">avg ${money(avgCostPerReq)} per req</div>
+      <div class="model-summary-sub">均价 ${money(avgCostPerReq)}/次</div>
     </div>
   </div>
-  <div class="sec-header" style="margin-bottom:10px"><span class="sec-title">Detail</span></div>
+  <div class="sec-header" style="margin-bottom:10px"><span class="sec-title">明细</span></div>
   <div class="model-detail-list">${modelCards(true)}</div>
 </div>
 
@@ -792,7 +792,7 @@ function renderSessions() {
         '<span class="sess-time">' + s.time + '</span>' +
         '</div></div>'
       ).join('')
-    : '<div class="muted" style="padding:24px;text-align:center">No sessions match</div>';
+    : '<div class="muted" style="padding:24px;text-align:center">无匹配会话</div>';
 }
 
 function esc(s) {

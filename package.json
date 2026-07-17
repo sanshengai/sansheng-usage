@@ -51,16 +51,16 @@
     "commands": [
       {
         "command": "clusage.openPanel",
-        "title": "Claude Usage: Open Dashboard",
+        "title": "Claude 用量：打开看板",
         "icon": "$(graph)"
       },
       {
         "command": "clusage.installBridge",
-        "title": "Claude Usage: Install statusline bridge (zero-request quota)"
+        "title": "Claude 用量：安装 statusline 桥（零请求读额度）"
       }
     ],
     "configuration": {
-      "title": "Clusage",
+      "title": "叁笙用量",
       "properties": {
         "clusage.statusBar.format": {
           "type": "string",
@@ -70,44 +70,44 @@
             "cost"
           ],
           "enumDescriptions": [
-            "Cost, percentages and the 5h reset countdown. Example: $12.30  5h:40% 2h 10m  7d:22%",
-            "Cost with a progress bar per quota window. Example: $12.30  5h ###--- 40%  7d #----- 22%. Reset times move to the tooltip.",
-            "Cost only. Example: $12.30. Quota stays in the tooltip."
+            "花费、百分比与 5h 重置倒计时。示例：$12.30  5h:40% 2h 10m  7d:22%",
+            "每个额度窗口用进度条显示。示例：$12.30  5h ###--- 40%  7d #----- 22%。重置时间移入悬停提示。",
+            "仅显示花费。示例：$12.30。额度留在悬停提示里。"
           ],
           "default": "compact",
-          "markdownDescription": "How the status bar item is rendered. Every variant keeps the full breakdown in the hover tooltip."
+          "markdownDescription": "状态栏的显示形态。三种形态都在悬停提示里保留完整明细。"
         },
         "clusage.statusBar.barWidth": {
           "type": "number",
           "default": 6,
           "minimum": 3,
           "maximum": 20,
-          "markdownDescription": "Width, in characters, of each quota bar. Only applies when `#clusage.statusBar.format#` is `bar`."
+          "markdownDescription": "每个额度进度条的字符宽度。仅在 `#clusage.statusBar.format#` 为 `bar` 时生效。"
         },
         "clusage.statusBar.showResets": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show each quota window's reset countdown beside the window it belongs to. In `bar` mode this adds both the 5h and 7d countdowns, bracketed after their labels (bar drops them for space by default); in `compact` mode it adds the 7d countdown next to the 5h one that is always shown."
+          "markdownDescription": "在每个额度窗口旁显示它的重置倒计时。`bar` 形态下会补上 5h 和 7d 两个倒计时（用「」括在标签后；bar 形态默认为省空间不显示）；`compact` 形态下会在一直显示的 5h 旁补上 7d 倒计时。"
         },
         "clusage.statusBar.showTodayTokens": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show today's total token count next to the cost in the status bar (e.g. `$12.30 · 1.2M`). Applies to every format."
+          "markdownDescription": "在状态栏花费旁显示今日总 token 数（如 `$12.30 · 1.2M`）。对所有形态生效。"
         },
         "clusage.hideCost": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Redact every dollar amount in the status bar and dashboard, replacing it with `$•••`. Tokens, percentages and quota bars stay visible, so the dashboard is safe to screenshot, stream or present without exposing spend."
+          "markdownDescription": "把状态栏和看板里的所有美元金额隐去，替换为 `$•••`。token、百分比、额度条照常显示，因此看板可以放心截图、直播或演示而不暴露花费。"
         },
         "clusage.statusBar.colorOnHighUsage": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Tint a quota window amber past 70% of its own utilization, orange past 80% and red past 90%. In `bar` mode each window tints independently and the cost is never tinted; the other formats render as one item, so they tint whole, off whichever window is further along. Turn this off to keep the status bar in the theme's usual colour at any usage — the percentages and bars still say where you are, without anything changing colour to get your attention."
+          "markdownDescription": "额度窗口用量过 70% 变琥珀、过 80% 变橙、过 90% 变红。`bar` 形态下每个窗口各自独立变色、花费永不变色；其它形态渲染为单个条目，按更危的那个窗口整条变色。关掉它则无论用量多高状态栏都保持主题原色——百分比和进度条照样告诉你到哪了，只是不靠变色抢你注意。"
         },
         "clusage.sessions.showTitles": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Label rows in the dashboard's **Sessions** tab with the conversation title Claude Code records in the transcript, falling back to the project name when a session has no title yet. Turn off to always show the project name."
+          "markdownDescription": "在看板 **会话** 标签页用 Claude Code 记在转录里的对话标题标注每一行，会话还没有标题时回落到项目名。关掉则始终显示项目名。"
         }
       }
     }
