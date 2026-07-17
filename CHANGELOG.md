@@ -6,9 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
-## [叁笙 fork · 未发布]
+## [1.0.0] - 2026-07-17
 
-本 fork（叁笙用量）相对上游 clusage 5.0.1 的改动，按主题汇总（对外正式发版时归入 1.0.0）：
+本 fork（叁笙用量）相对上游 clusage 5.0.1 的改动，按主题汇总：
 
 ### 新增
 - 状态栏三形态（compact / bar / cost）与每形态可配

@@ -72,4 +72,4 @@ code --install-extension 叁笙用量-<版本>.vsix
 
 ## 致谢与许可
 
-Fork 自 [AjaySingh10/clusage](https://github.com/AjaySingh10/clusage)，感谢原作者。MIT 许可，保留上游版权声明，见 [LICENSE](LICENSE)。
+Fork 自 [AjaySingh10/clusage](https://github.com/AjaySingh10/clusage)，感谢原作者。MIT 许可，保留上游版权声明；完整协议见扩展包内的 `LICENSE` 文件。

@@ -12,3 +12,4 @@ tools/**
 交接文档.md
 *决策看板*.html
 发布清单.md
+.secrets/**
