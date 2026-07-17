@@ -26,22 +26,51 @@ export function showDashboard(context: vscode.ExtensionContext, summary: UsageSu
   if (currentPanel && isDisposed(currentPanel)) currentPanel = undefined;
   if (currentPanel) {
     currentPanel.reveal(vscode.ViewColumn.One);
-    currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota);
+    lastPaintAt = Date.now();
+    currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota, true);
     return;
   }
   currentPanel = vscode.window.createWebviewPanel(
     'clusage.dashboard', 'Claude Usage', vscode.ViewColumn.One,
     { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')] }
   );
-  currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota);
+  lastPaintAt = Date.now();
+  currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota, true);
   currentPanel.onDidDispose(() => { currentPanel = undefined; }, null, context.subscriptions);
 }
 
+// While Claude Code streams, the JSONL watcher lands a fresh summary every debounce
+// window (~0.5 s). Repainting the whole document at that cadence made the page strobe:
+// every card replayed its entrance animation twice a second, and scroll/tab/filter
+// state reset each time. Two measures calm it: repaints are spaced at least
+// MIN_PAINT_MS apart (the newest data is kept and painted when the window elapses,
+// never dropped), and refresh paints render with animations off — entrance animation
+// belongs to opening the dashboard, not to data changing under it. In-page state
+// survives the html swap via the webview's getState/setState (see the inline script).
+const MIN_PAINT_MS = 3000;
+let lastPaintAt = 0;
+let paintTimer: ReturnType<typeof setTimeout> | undefined;
+let pendingPaint: { summary: UsageSummary; quota: QuotaData | null } | undefined;
+
 export function refreshDashboard(summary: UsageSummary, quota: QuotaData | null): void {
   if (currentPanel && isDisposed(currentPanel)) currentPanel = undefined;
-  if (currentPanel?.visible) {
-    currentPanel.webview.html = getHtml(currentPanel.webview, summary, quota);
+  if (!currentPanel?.visible) return;
+  pendingPaint = { summary, quota };
+  const wait = lastPaintAt + MIN_PAINT_MS - Date.now();
+  if (wait <= 0) {
+    paintPending();
+  } else if (!paintTimer) {
+    paintTimer = setTimeout(paintPending, wait);
   }
+}
+
+function paintPending(): void {
+  paintTimer = undefined;
+  if (!pendingPaint) return;
+  if (!currentPanel || isDisposed(currentPanel) || !currentPanel.visible) return;
+  lastPaintAt = Date.now();
+  currentPanel.webview.html = getHtml(currentPanel.webview, pendingPaint.summary, pendingPaint.quota, false);
+  pendingPaint = undefined;
 }
 
 function relativeTime(date: Date): string {
@@ -178,8 +207,11 @@ function projectionLine(p: QuotaProjection | null): string {
 // figure, so it is safe under hideCost (the hover title drops the amount there too).
 // Cells flow down 7-row columns, and the first day is padded to its weekday row so
 // each row reads as one weekday, like the contribution graph.
-function heatmap(daily: number[], hideCost: boolean): string {
-  const DAY = 86400_000;
+function heatmap(dailyIn: number[] | undefined, hideCost: boolean): string {
+  // A summary restored from globalState can predate the dailyCost field (upstream
+  // 5.0.1 never had it) — rendering the dashboard from one of those before the first
+  // scan lands must not take the whole page down with it.
+  const daily = dailyIn ?? [];
   // Shade by quantile among the days that had activity, not as a fraction of the busiest
   // day. A single outlier (one big batch run) otherwise flattens every ordinary day into
   // the bottom level and the grid renders as one flat block of colour — which is exactly
@@ -199,8 +231,16 @@ function heatmap(daily: number[], hideCost: boolean): string {
     if (v <= q3) return 3;
     return 4;
   };
-  const now = Date.now();
-  const dayOf = (i: number): Date => new Date(now - (daily.length - 1 - i) * DAY);
+  // Calendar arithmetic, not now - k*24h: the aggregator buckets by local calendar day
+  // (startOfDay on both sides), so the renderer must step days the same way or a DST
+  // hop shifts every label and weekday row by one.
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const dayOf = (i: number): Date => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - (daily.length - 1 - i));
+    return d;
+  };
   const pad = dayOf(0).getDay();
 
   const cells: string[] = [];
@@ -251,7 +291,7 @@ function heatmap(daily: number[], hideCost: boolean): string {
   </div>`;
 }
 
-function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaData | null): string {
+function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaData | null, animate: boolean): string {
   const iconUri = extensionUri
     ? webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'icon.png'))
     : '';
@@ -600,10 +640,15 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 
 /* ── Animations ── */
 @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+/* Refresh repaints re-run every entrance animation, which reads as the page strobing.
+   The .no-anim body class (set on data-refresh renders) pins those cards to their
+   settled state; the live-dot pulse is exempt on purpose. */
+body.no-anim .hero-card, body.no-anim .token-card, body.no-anim .quota-card,
+body.no-anim .model-card, body.no-anim .model-summary-card { animation: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 </style>
 </head>
-<body>
+<body class="${animate ? '' : 'no-anim'}">
 
 <!-- Top bar -->
 <div class="topbar">
@@ -663,6 +708,14 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
   </div>
 
   <div class="section">
+    <div class="sec-header">
+      <span class="sec-title">累计 Token</span>
+      <span class="sec-meta">共 ${formatTokenCount(totalAllTime)} · ${cachePct(tokenBreakdown)}</span>
+    </div>
+    <div class="token-grid">${tokenGrid(tokenBreakdown, totalAllTime, 'total')}</div>
+  </div>
+
+  <div class="section">
     <div class="sec-header"><span class="sec-title">用量窗口与额度</span></div>
     <div class="quota-grid">
       <div class="quota-card" style="animation-delay:0ms">
@@ -713,14 +766,6 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
       <span class="sec-meta">${money(totalModelCost)} 共 · ${formatTokenCount(totalModelTokens)} tokens</span>
     </div>
     <div class="model-grid">${modelCards(false)}</div>
-  </div>
-
-  <div class="section">
-    <div class="sec-header">
-      <span class="sec-title">累计 Token</span>
-      <span class="sec-meta">共 ${formatTokenCount(totalAllTime)} · ${cachePct(tokenBreakdown)}</span>
-    </div>
-    <div class="token-grid">${tokenGrid(tokenBreakdown, totalAllTime, 'total')}</div>
   </div>
 
 </div>
@@ -797,22 +842,34 @@ const PROJECTS = ${projectsJson};
 const SESSIONS = ${sessionsJson};
 let sortKey = 'cost', sortDir = -1, sessModel = 'All';
 
+// Data refreshes swap the entire document, which used to reset the active tab, the
+// scroll position and every filter mid-read. The webview's own state store survives
+// that swap, so each interaction records itself and the fresh document replays it
+// synchronously before first paint (restore block at the end of this script).
+const vsapi = typeof acquireVsCodeApi === 'function'
+  ? acquireVsCodeApi()
+  : { getState: () => null, setState: () => {} };
+function saveSt(patch) { vsapi.setState(Object.assign(vsapi.getState() || {}, patch)); }
+
 function switchTab(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.remove('hidden');
   document.querySelector('[data-tab="' + name + '"]').classList.add('active');
+  saveSt({ tab: name });
 }
 
 function sortProjects(key) {
   document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('sort-' + key).classList.add('active');
   if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = key === 'name' ? 1 : -1; }
+  saveSt({ sortKey, sortDir });
   renderProjects();
 }
 
 function renderProjects() {
   const q = (document.getElementById('proj-search').value || '').toLowerCase();
+  saveSt({ projQ: q });
   let rows = PROJECTS.filter(p => p.name.toLowerCase().includes(q));
   rows.sort((a, b) => {
     let va = a[sortKey], vb = b[sortKey];
@@ -838,12 +895,14 @@ function filterSessions(btn) {
     document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     sessModel = btn.dataset.model;
+    saveSt({ sessModel });
   }
   renderSessions();
 }
 
 function renderSessions() {
   const q = (document.getElementById('sess-search') ? document.getElementById('sess-search').value : '').toLowerCase();
+  saveSt({ sessQ: q });
   const rows = SESSIONS.filter(s =>
     (sessModel === 'All' || s.model === sessModel) &&
     (!q || s.name.toLowerCase().includes(q) || s.project.toLowerCase().includes(q))
@@ -867,8 +926,33 @@ function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Replay recorded UI state before first render/paint: tab, filters, sort, scroll.
+// Assign state directly rather than re-invoking the click handlers — sortProjects()
+// toggles direction on a repeated key, so calling it here would flip the order on
+// every refresh.
+(function restore() {
+  const st = vsapi.getState() || {};
+  if (st.sortKey && document.getElementById('sort-' + st.sortKey)) {
+    sortKey = st.sortKey; sortDir = st.sortDir || -1;
+    document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById('sort-' + sortKey).classList.add('active');
+  }
+  if (st.sessModel) {
+    sessModel = st.sessModel;
+    document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.model === sessModel));
+  }
+  if (st.projQ && document.getElementById('proj-search')) document.getElementById('proj-search').value = st.projQ;
+  if (st.sessQ && document.getElementById('sess-search')) document.getElementById('sess-search').value = st.sessQ;
+  if (st.tab && document.getElementById('tab-' + st.tab)) switchTab(st.tab);
+})();
 renderProjects();
 renderSessions();
+(function restoreScroll() {
+  const st = vsapi.getState() || {};
+  if (st.scrollY) window.scrollTo(0, st.scrollY);
+  let t;
+  window.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(() => saveSt({ scrollY: window.scrollY }), 150); }, { passive: true });
+})();
 </script>
 </body>
 </html>`;

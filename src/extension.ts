@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
-import { scanAllProjects } from './parser';
+import { scanAllProjects, initParseCache, flushParseCache } from './parser';
 import { aggregate, UsageSummary } from './aggregator';
 import { StatusBarController } from './statusBar';
 import { showDashboard, refreshDashboard } from './webview';
@@ -16,11 +16,30 @@ let extContext: vscode.ExtensionContext | undefined;
 let usageScanPromise: Promise<void> | undefined;
 let usageScanQueued = false;
 
+// globalState round-trips through JSON, so every Date in a restored summary comes
+// back as an ISO string; the dashboard then calls .getTime() on it and throws.
+// (Predates this fork's changes — it just only bit when the dashboard was opened
+// before the first scan finished.)
+function reviveSummaryDates(s: UsageSummary): void {
+  s.lastUpdated = new Date(s.lastUpdated);
+  for (const sess of s.recentSessions ?? []) sess.timestamp = new Date(sess.timestamp);
+}
+
+// globalState is only a warm-boot nicety, but an unthrottled update() wrote a few
+// hundred KB of summary into it on every streamed turn. One write a minute keeps the
+// boot data fresh enough while cutting that churn ~100×.
+let lastSummarySavedAt = 0;
+const SUMMARY_SAVE_MS = 60_000;
+
 async function doRefreshUsage(): Promise<void> {
   try {
     const { records, titles } = await scanAllProjects();
     lastSummary = aggregate(records, titles);
-    extContext?.globalState.update('lastSummary', lastSummary);
+    if (Date.now() - lastSummarySavedAt > SUMMARY_SAVE_MS) {
+      lastSummarySavedAt = Date.now();
+      extContext?.globalState.update('lastSummary', lastSummary);
+      extContext?.globalState.update('lastSummaryAt', lastSummarySavedAt);
+    }
     statusBar?.update(lastSummary, lastQuota);
     refreshDashboard(lastSummary, lastQuota);
   } catch (err) {
@@ -101,15 +120,25 @@ export function activate(context: vscode.ExtensionContext): void {
   statusBar = new StatusBarController();
   context.subscriptions.push(statusBar);
 
-  // Restore cached data instantly so the status bar is never blank on load
+  // The disk-persisted parse cache turns the first scan of a new window from a full
+  // cold parse (~40 s of spinner on a large history) into roughly a warm one.
+  initParseCache(context.globalStorageUri.fsPath);
+
   const cachedSummary = context.globalState.get<UsageSummary>('lastSummary');
+  const cachedSummaryAt = context.globalState.get<number>('lastSummaryAt', 0);
   const cachedQuotaRaw = context.globalState.get<any>('lastQuota');
 
-  // Restore cached data into memory so the dashboard can open immediately,
-  // but do NOT push it to the status bar — the spinner stays until the first
-  // real scan completes (avoids showing stale zeros on startup).
   if (cachedSummary) {
     lastSummary = cachedSummary;
+    // Push it straight to the status bar when it was saved earlier TODAY — numbers a
+    // few minutes stale beat half a minute of spinner, and the real scan replaces
+    // them seconds later. A summary from a previous day stays off the bar: its
+    // todayCost belongs to that day, and rendering it would show yesterday's spend
+    // as today's. (Dates are revived below — globalState round-trips Date as string.)
+    reviveSummaryDates(lastSummary);
+    if (new Date(cachedSummaryAt).toDateString() === new Date().toDateString()) {
+      statusBar?.update(lastSummary, null);
+    }
   }
   if (cachedQuotaRaw) {
     const now = Date.now();
@@ -126,8 +155,22 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   // Status bar stays on the spinner until refreshUsage() finishes below.
 
-  // Open dashboard command
-  const openCmd = vscode.commands.registerCommand('clusage.openPanel', () => {
+  // registerCommand throws when the id is already taken — which happens for real
+  // during a fork migration: the old install is uninstalled on disk but still active
+  // in the open window, owning `clusage.*`, while this one hot-activates alongside
+  // it. Letting that throw escape activate() froze the whole extension at the
+  // spinner (nothing after this line ran). One reload later the old install is gone
+  // and the ids are free; until then, degrade to a working status bar without the
+  // command rather than a dead extension.
+  const safeRegister = (id: string, fn: (...args: any[]) => any): void => {
+    try {
+      context.subscriptions.push(vscode.commands.registerCommand(id, fn));
+    } catch (err) {
+      console.error(`[clusage] command '${id}' already registered (stale duplicate install still active?):`, err);
+    }
+  };
+
+  safeRegister('clusage.openPanel', () => {
     if (lastSummary) {
       showDashboard(context, lastSummary, lastQuota);
     } else {
@@ -140,9 +183,8 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     }
   });
-  context.subscriptions.push(openCmd);
 
-  const installBridgeCmd = vscode.commands.registerCommand('clusage.installBridge', async () => {
+  safeRegister('clusage.installBridge', async () => {
     const result = installStatuslineBridge();
     if (result.ok) {
       // A fresh reading may now be available without any request; refresh so the UI
@@ -153,7 +195,6 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.window.showErrorMessage(result.message);
     }
   });
-  context.subscriptions.push(installBridgeCmd);
 
   // Watch for new JSONL data
   const claudeGlob = new vscode.RelativePattern(
@@ -166,8 +207,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const debouncedRefresh = () => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => refreshUsage(), 500);
-    // Refresh quota ~15 s after the last JSONL write, so the status bar
-    // catches up within a turn or two rather than waiting the full poll interval.
+    // Quota 1 s after the last JSONL write: the bridge file (preferred source) is
+    // refreshed by Claude Code every turn and reading it is a local file stat; the
+    // endpoint fallback rate-limits itself to one call per 180 s regardless.
     if (quotaDebounceTimer) clearTimeout(quotaDebounceTimer);
     quotaDebounceTimer = setTimeout(() => refreshQuota(), 1_000);
   };
@@ -196,5 +238,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   if (resetRefreshTimer) clearTimeout(resetRefreshTimer);
+  // The debounced persist may still be pending; deactivate gets no second chance,
+  // so write synchronously now or the next window starts cold again.
+  flushParseCache();
   statusBar?.dispose();
 }

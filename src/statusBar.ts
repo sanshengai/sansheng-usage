@@ -89,11 +89,13 @@ export class StatusBarController {
   }
 
   update(summary: UsageSummary, quota: QuotaData | null): void {
-    // No calls made today — show spinner until first request this session
+    // No usage yet today. A static icon, not the spinner: this is a settled state
+    // that can last all morning, and a spinner that never stops reads as the
+    // extension being stuck loading rather than you not having used Claude yet.
     if (summary.todayTokens === 0) {
       this.hideWindows();
       this.main.color   = undefined;
-      this.main.text    = '$(sync~spin) 等待 Claude…';
+      this.main.text    = '$(graph) 今日暂无用量';
       this.main.tooltip = '今天还没有 Claude Code 用量';
       return;
     }

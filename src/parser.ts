@@ -45,6 +45,100 @@ export interface ScanResult {
 // survives across scanAllProjects calls for the life of the extension host.
 const fileCache = new Map<string, { mtimeMs: number; parse: FileParse }>();
 
+// ── Disk persistence for the cache ─────────────────────────────────────────────
+// The in-memory cache dies with the extension host, so every new window used to pay
+// a full cold parse of the whole history (~40 s on a large one) behind a status-bar
+// spinner. Persisting the cache makes a cold start cost roughly one warm scan: load
+// the file, then mtime-validate as usual — only files that actually changed since
+// the last session get re-read. The format hoists per-file constants (projectPath)
+// and stores records as tuples, gzipped; a large history lands in the low MBs.
+// Any read/shape problem just means starting cold, exactly like before the cache.
+// v2: per-record projectPath via a per-file string table. v1 hoisted one path per
+// file, which corrupted per-project attribution (see type comment below); a v1 file
+// read with the v2 layout would mis-parse silently, so the version gate must reject it.
+const CACHE_VERSION = 2;
+let cacheFilePath: string | undefined;
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+const PERSIST_DEBOUNCE_MS = 60_000;
+
+// A record's projectPath comes from its row's own `cwd` (parser below), and one
+// session file spans every directory Claude cd'd through — so the path must be
+// stored per record, never hoisted per file. Hoisting it collapsed 446 projects
+// into 147 and re-attributed their costs to whichever path came first in the file.
+// A per-file string table keeps the size win without the corruption: each record
+// carries an index into it.
+type CachedRecordTuple = [number, string, string, 0 | 1, number, number, number, number, number, number, number, number];
+type CachedFileEntry = [string, number, string[], CachedRecordTuple[], Array<[string, string | undefined, string | undefined]>];
+
+export function initParseCache(storageDir: string): void {
+  try {
+    fs.mkdirSync(storageDir, { recursive: true });
+    cacheFilePath = path.join(storageDir, `parse-cache-v${CACHE_VERSION}.json.gz`);
+    if (!fs.existsSync(cacheFilePath)) return;
+    const zlib = require('zlib') as typeof import('zlib');
+    const raw = JSON.parse(zlib.gunzipSync(fs.readFileSync(cacheFilePath)).toString('utf8'));
+    if (raw?.v !== CACHE_VERSION || !Array.isArray(raw.files)) return;
+    for (const [p, mtimeMs, paths, recs, titles] of raw.files as CachedFileEntry[]) {
+      const records: UsageRecord[] = recs.map(
+        ([t, sid, model, side, inp, out, cr, cw, c5, c1, cost, pIdx]) => ({
+          timestamp: new Date(t), sessionId: sid, projectPath: paths[pIdx] ?? '', model,
+          isSidechain: side === 1,
+          inputTokens: inp, outputTokens: out, cacheReadTokens: cr,
+          cacheWriteTokens: cw, cacheWrite5mTokens: c5, cacheWrite1hTokens: c1,
+          costUSD: cost,
+        })
+      );
+      const titlePairs: Array<[string, SessionTitle]> = titles.map(
+        ([sid, ai, custom]) => [sid, { ai, custom }]
+      );
+      fileCache.set(p, { mtimeMs, parse: { records, titles: titlePairs } });
+    }
+  } catch (err) {
+    fileCache.clear();
+    console.error('[clusage] parse cache load failed, starting cold:', err);
+  }
+}
+
+function schedulePersist(): void {
+  if (!cacheFilePath) return;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => { persistTimer = undefined; flushParseCache(); }, PERSIST_DEBOUNCE_MS);
+}
+
+/** Synchronous write; also called from deactivate() where async work is not awaited. */
+export function flushParseCache(): void {
+  if (!cacheFilePath) return;
+  try {
+    const files: CachedFileEntry[] = [];
+    for (const [p, { mtimeMs, parse }] of fileCache) {
+      const paths: string[] = [];
+      const pathIdx = new Map<string, number>();
+      const idxOf = (pp: string): number => {
+        let i = pathIdx.get(pp);
+        if (i === undefined) { i = paths.length; paths.push(pp); pathIdx.set(pp, i); }
+        return i;
+      };
+      files.push([
+        p, mtimeMs, paths,
+        parse.records.map((r): CachedRecordTuple => [
+          r.timestamp.getTime(), r.sessionId, r.model, r.isSidechain ? 1 : 0,
+          r.inputTokens, r.outputTokens, r.cacheReadTokens,
+          r.cacheWriteTokens, r.cacheWrite5mTokens, r.cacheWrite1hTokens, r.costUSD,
+          idxOf(r.projectPath),
+        ]),
+        parse.titles.map(([sid, t]): [string, string | undefined, string | undefined] => [sid, t.ai, t.custom]),
+      ]);
+    }
+    const zlib = require('zlib') as typeof import('zlib');
+    const body = zlib.gzipSync(Buffer.from(JSON.stringify({ v: CACHE_VERSION, files }), 'utf8'));
+    const tmp = `${cacheFilePath}.tmp`;
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, cacheFilePath);
+  } catch (err) {
+    console.error('[clusage] parse cache persist failed:', err);
+  }
+}
+
 /** custom > ai > undefined. Callers fall back to the project name. */
 export function resolveSessionTitle(t: SessionTitle | undefined): string | undefined {
   return t?.custom || t?.ai || undefined;
@@ -308,6 +402,11 @@ export async function scanAllProjects(): Promise<ScanResult> {
   for (const key of fileCache.keys()) {
     if (!seenPaths.has(key)) fileCache.delete(key);
   }
+
+  // Persist after the prune so the snapshot only ever holds live files. Debounced:
+  // while Claude streams, scans land every turn and a multi-MB gzip write per turn
+  // would cost more than the cache saves.
+  schedulePersist();
 
   return { records: allRecords, titles };
 }
