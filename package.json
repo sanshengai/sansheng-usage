@@ -2,7 +2,7 @@
   "name": "sansheng-usage",
   "displayName": "叁笙用量 · Claude Code 用量监控",
   "description": "在状态栏和中文看板实时监控 Claude Code 的花费、token 与额度（5h/7d 燃烧率、缓存命中率、活动热力图）。for Claude Code。非 Anthropic 官方、与其无隶属。",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "sansheng",
   "author": {
     "name": "Sansheng"
