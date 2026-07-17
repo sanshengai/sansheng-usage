@@ -40,6 +40,11 @@ export interface ScanResult {
   titles: Map<string, SessionTitle>;
 }
 
+// Per-file parse cache, keyed by absolute path, invalidated by mtime. Lets a
+// re-scan re-read only the files that actually changed. Module-level so it
+// survives across scanAllProjects calls for the life of the extension host.
+const fileCache = new Map<string, { mtimeMs: number; parse: FileParse }>();
+
 /** custom > ai > undefined. Callers fall back to the project name. */
 export function resolveSessionTitle(t: SessionTitle | undefined): string | undefined {
   return t?.custom || t?.ai || undefined;
@@ -102,12 +107,21 @@ function computeCost(
   );
 }
 
+// One file's parse: the records it yielded and the session titles it declared.
+// A file owns both, so a cached parse can be replayed without re-reading the file
+// and without a shared map being mutated as a side effect.
+interface FileParse {
+  records: UsageRecord[];
+  titles: Array<[string, SessionTitle]>;
+}
+
 async function readJsonlFile(
   filePath: string,
-  projectPath: string,
-  titles: Map<string, SessionTitle>
-): Promise<UsageRecord[]> {
+  projectPath: string
+): Promise<FileParse> {
   const records: UsageRecord[] = [];
+  const titles = new Map<string, SessionTitle>();
+  const empty: FileParse = { records, titles: [] };
 
   // A real transcript is a few MB at most (the largest seen in practice is single
   // digits). A file orders of magnitude larger is corrupt — most dangerously one
@@ -115,9 +129,9 @@ async function readJsonlFile(
   // memory before we could look at it. Skip such files rather than risk the OOM.
   const MAX_FILE_BYTES = 200 * 1024 * 1024;
   try {
-    if (fs.statSync(filePath).size > MAX_FILE_BYTES) return records;
+    if (fs.statSync(filePath).size > MAX_FILE_BYTES) return empty;
   } catch {
-    return records;
+    return empty;
   }
 
   // Claude Code appends the same final assistant message multiple times under different
@@ -205,7 +219,7 @@ async function readJsonlFile(
     }
   }
 
-  return records;
+  return { records, titles: [...titles] };
 }
 
 // Recursively collect every *.jsonl under a project directory. Claude Code
@@ -249,18 +263,50 @@ export async function scanAllProjects(): Promise<ScanResult> {
     return { records: allRecords, titles };
   }
 
+  const seenPaths = new Set<string>();
+
   for (const projectDir of projectDirs) {
     const projectPath = '/' + projectDir.replace(/^-/, '').replace(/-/g, '/');
     const dirPath = path.join(claudeDir, projectDir);
 
     for (const filePath of collectJsonlFiles(dirPath)) {
+      seenPaths.add(filePath);
+
+      let mtimeMs: number;
       try {
-        const records = await readJsonlFile(filePath, projectPath, titles);
-        allRecords.push(...records);
+        mtimeMs = fs.statSync(filePath).mtimeMs;
       } catch {
-        // Skip unreadable files
+        continue; // vanished between listing and stat
+      }
+
+      // A transcript is append-only, so an unchanged mtime means an unchanged
+      // parse. Reuse it: the watcher fires this scan on every JSONL append, and
+      // re-reading the whole ~4.5 GB history each time is the tool's worst cost.
+      let parse: FileParse | undefined = fileCache.get(filePath)?.mtimeMs === mtimeMs
+        ? fileCache.get(filePath)!.parse
+        : undefined;
+      if (!parse) {
+        try {
+          parse = await readJsonlFile(filePath, projectPath);
+        } catch {
+          continue; // unreadable file
+        }
+        fileCache.set(filePath, { mtimeMs, parse });
+      }
+
+      allRecords.push(...parse.records);
+      for (const [sid, t] of parse.titles) {
+        const prev = titles.get(sid);
+        // custom > ai; merge field-wise so neither kind clobbers the other.
+        titles.set(sid, { ai: t.ai ?? prev?.ai, custom: t.custom ?? prev?.custom });
       }
     }
+  }
+
+  // Drop cache entries for files that no longer exist so the map can't grow without
+  // bound as sessions come and go.
+  for (const key of fileCache.keys()) {
+    if (!seenPaths.has(key)) fileCache.delete(key);
   }
 
   return { records: allRecords, titles };
