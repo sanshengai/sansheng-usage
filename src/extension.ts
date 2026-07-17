@@ -6,6 +6,7 @@ import { aggregate, UsageSummary } from './aggregator';
 import { StatusBarController } from './statusBar';
 import { showDashboard, refreshDashboard } from './webview';
 import { fetchQuota, QuotaData } from './quota';
+import { installStatuslineBridge } from './bridge';
 
 let statusBar: StatusBarController | undefined;
 let lastSummary: UsageSummary | undefined;
@@ -140,6 +141,19 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
   context.subscriptions.push(openCmd);
+
+  const installBridgeCmd = vscode.commands.registerCommand('clusage.installBridge', async () => {
+    const result = installStatuslineBridge();
+    if (result.ok) {
+      // A fresh reading may now be available without any request; refresh so the UI
+      // reflects the new source as soon as Claude Code writes the bridge.
+      void refreshQuota();
+      vscode.window.showInformationMessage(result.message);
+    } else {
+      vscode.window.showErrorMessage(result.message);
+    }
+  });
+  context.subscriptions.push(installBridgeCmd);
 
   // Watch for new JSONL data
   const claudeGlob = new vscode.RelativePattern(

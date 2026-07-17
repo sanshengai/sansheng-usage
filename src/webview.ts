@@ -606,7 +606,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
         <div class="quota-tokens">${formatTokenCount(summary.lastFiveHours.tokens)} tokens</div>
         ${quota ? `<div class="q-track"><div class="q-fill ${fiveClass}" style="width:${fivePct}%"></div></div>
         <div class="quota-footer"><span>${timeUntil(quota.fiveHourResetAt)}</span>${fmtPct(fivePct, fiveClass)}</div>
-        ${projectionLine(projectQuota(quota.fiveHourUtilization, quota.fiveHourResetAt, 5 * 3600_000))}` : ''}
+        ${projectionLine(projectQuota(quota.fiveHourUtilization, quota.fiveHourResetAt, 5 * 3600_000))}
+        ${typeof quota.contextPct === 'number' ? `<div class="quota-proj">context ${Math.round(quota.contextPct)}% full</div>` : ''}` : ''}
       </div>
       <div class="quota-card" style="animation-delay:60ms">
         <div class="quota-card-header">

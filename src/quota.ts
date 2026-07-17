@@ -18,6 +18,48 @@ export interface QuotaData {
   fetchedAt: Date;
   source: 'endpoint' | 'bridge'; // where this reading came from, for the UI to label
   modelWeekly: ModelQuota[];     // per-model weekly limits from the usage endpoint's limits[]
+  contextPct?: number;           // 0–100 context-window occupancy, only from the bridge
+}
+
+// The statusline bridge writes here (see bridge.ts): whatever Claude Code piped to
+// its statusline command on the last turn. When it is recent it is the freshest,
+// zero-request, zero-ToS source there is, so it is preferred over the endpoint.
+export const BRIDGE_FILE = path.join(os.homedir(), '.claude', 'clusage-bridge.json');
+// Claude Code only rewrites the bridge while it is running, so a reading older than
+// this means it has gone idle and the endpoint should take over for freshness.
+const BRIDGE_MAX_AGE_MS = 5 * 60_000;
+
+function readBridgeQuota(): QuotaData | null {
+  let j: any;
+  try {
+    j = JSON.parse(fs.readFileSync(BRIDGE_FILE, 'utf8'));
+  } catch {
+    return null; // no bridge installed, or unreadable
+  }
+  if (!j || typeof j.writtenAt !== 'number' || Date.now() - j.writtenAt > BRIDGE_MAX_AGE_MS) return null;
+  const fh = j.fiveHour;
+  if (!fh || typeof fh.pct !== 'number') return null;
+
+  // resets_at arrives as Unix epoch seconds from the statusline JSON; tolerate an
+  // ISO string too in case the shape shifts.
+  const toDate = (v: unknown, fallbackMs: number) =>
+    typeof v === 'number' ? new Date(v * 1000)
+      : typeof v === 'string' ? new Date(v)
+      : new Date(Date.now() + fallbackMs);
+  const sd = j.sevenDay;
+  const fiveHourUtilization = fh.pct / 100;
+  const sevenDayUtilization = sd && typeof sd.pct === 'number' ? sd.pct / 100 : 0;
+  return {
+    fiveHourUtilization,
+    fiveHourResetAt: toDate(fh.resetAt, 5 * 3600_000),
+    sevenDayUtilization,
+    sevenDayResetAt: toDate(sd?.resetAt, 7 * 86400_000),
+    overallStatus: fiveHourUtilization >= 1 || sevenDayUtilization >= 1 ? 'blocked' : 'allowed',
+    fetchedAt: new Date(j.writtenAt),
+    source: 'bridge',
+    modelWeekly: [],
+    contextPct: typeof j.contextPct === 'number' ? j.contextPct : undefined,
+  };
 }
 
 // The usage endpoint drops requests without a claude-code User-Agent into an
@@ -132,6 +174,14 @@ function parseUsage(body: string): QuotaData | null {
  */
 export async function fetchQuota(opts: { force?: boolean } = {}): Promise<QuotaData | null> {
   const now = Date.now();
+
+  // Prefer the statusline bridge whenever it is fresh: it is the same authoritative
+  // data Claude Code already computed, handed over locally, so this makes no request
+  // and touches no credential. The endpoint only runs when the bridge is stale or
+  // absent (Claude Code idle, or the bridge not installed).
+  const bridge = readBridgeQuota();
+  if (bridge) return bridge;
+
   if (!opts.force && cache && now - cache.at < MIN_INTERVAL_MS) return cache.data;
   if (!opts.force && now < backoffUntil) return cache?.data ?? null;
 

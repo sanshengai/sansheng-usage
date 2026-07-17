@@ -53,6 +53,10 @@
         "command": "clusage.openPanel",
         "title": "Claude Usage: Open Dashboard",
         "icon": "$(graph)"
+      },
+      {
+        "command": "clusage.installBridge",
+        "title": "Claude Usage: Install statusline bridge (zero-request quota)"
       }
     ],
     "configuration": {
