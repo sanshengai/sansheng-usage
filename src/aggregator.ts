@@ -65,6 +65,7 @@ export interface UsageSummary {
   streakDays: number;       // consecutive days with usage ending today
   // Sparkline + change badges
   last7DayCosts: number[];  // [6 days ago … today], for sparklines
+  dailyCost: number[];      // [89 days ago … today], for the activity heatmap
   prevWeekCost: number;     // 7–14 days ago, for week-over-week change
   prevMonthCost: number;    // previous calendar month, for month-over-month change
 }
@@ -139,6 +140,7 @@ export function aggregate(
   let prevWeekCost = 0;
   let prevMonthCost = 0;
   const last7DayCosts: number[] = Array(7).fill(0);
+  const dailyCost: number[] = Array(90).fill(0);
 
   const prevMonthStart = (() => {
     const d = new Date(now);
@@ -189,6 +191,7 @@ export function aggregate(
 
     const dayAge = Math.floor((todayStart - startOfDay(r.timestamp).getTime()) / DAY_MS);
     if (dayAge >= 0 && dayAge < 7) last7DayCosts[6 - dayAge] += r.costUSD;
+    if (dayAge >= 0 && dayAge < 90) dailyCost[89 - dayAge] += r.costUSD;
     datesWithUsage.add(startOfDay(r.timestamp).getTime());
 
     // Project grouping
@@ -308,6 +311,7 @@ export function aggregate(
     tokenBreakdown,
     todayTokenBreakdown,
     last7DayCosts,
+    dailyCost,
     prevWeekCost,
     prevMonthCost,
     byProject,

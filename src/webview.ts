@@ -173,6 +173,32 @@ function projectionLine(p: QuotaProjection | null): string {
   return `<div class="quota-proj">~${p.ratePerHour.toFixed(0)}%/h · ~${p.projectedPct.toFixed(0)}% by reset${full}</div>`;
 }
 
+// GitHub-style activity grid over the last 90 days. Each cell is one day, shaded by
+// that day's cost relative to the busiest day — a relative intensity, never a dollar
+// figure, so it is safe under hideCost (the hover title drops the amount there too).
+// Cells flow down 7-row columns, and the first day is padded to its weekday row so
+// each row reads as one weekday, like the contribution graph.
+function heatmap(daily: number[], hideCost: boolean): string {
+  const DAY = 86400_000;
+  const max = Math.max(...daily, 0);
+  const bucket = (v: number): number => {
+    if (v <= 0) return 0;
+    if (max <= 0) return 1;
+    const r = v / max;
+    return r < 0.25 ? 1 : r < 0.5 ? 2 : r < 0.75 ? 3 : 4;
+  };
+  const now = Date.now();
+  const pad = new Date(now - (daily.length - 1) * DAY).getDay();
+  const cells: string[] = [];
+  for (let i = 0; i < pad; i++) cells.push('<div class="hm-cell hm-pad"></div>');
+  for (let i = 0; i < daily.length; i++) {
+    const label = new Date(now - (daily.length - 1 - i) * DAY).toLocaleDateString();
+    const title = hideCost ? label : `${label} · ${formatCost(daily[i])}`;
+    cells.push(`<div class="hm-cell hm-l${bucket(daily[i])}" title="${escHtml(title)}"></div>`);
+  }
+  return `<div class="heatmap-scroll"><div class="heatmap">${cells.join('')}</div></div>`;
+}
+
 function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaData | null): string {
   const iconUri = extensionUri
     ? webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'icon.png'))
@@ -427,6 +453,15 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 .quota-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
 .quota-proj { font-size: 10.5px; color: var(--muted); margin-top: 6px; opacity: .85; }
 .proj-warn { color: var(--rose); font-weight: 600; }
+.heatmap-scroll { overflow-x: auto; padding-bottom: 4px; }
+.heatmap { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px; gap: 3px; width: max-content; }
+.hm-cell { width: 12px; height: 12px; border-radius: 2px; }
+.hm-pad { visibility: hidden; }
+.hm-l0 { background: var(--border); }
+.hm-l1 { background: rgba(94, 234, 212, .28); }
+.hm-l2 { background: rgba(94, 234, 212, .5); }
+.hm-l3 { background: rgba(94, 234, 212, .74); }
+.hm-l4 { background: rgba(94, 234, 212, 1); }
 .quota-pct.ok     { color: var(--accent2); font-weight: 600; }
 .quota-pct.warn   { color: var(--amber); font-weight: 600; }
 .quota-pct.danger { color: var(--rose); font-weight: 600; }
@@ -593,6 +628,14 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
         <div class="quota-tokens">${formatTokenCount(summary.lastHour.tokens)} tokens</div>
       </div>
     </div>
+  </div>
+
+  <div class="section">
+    <div class="sec-header">
+      <span class="sec-title">Activity</span>
+      <span class="sec-meta">last 90 days</span>
+    </div>
+    ${heatmap(summary.dailyCost, hideCost)}
   </div>
 
   <div class="section">
