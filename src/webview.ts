@@ -131,6 +131,48 @@ function jsonForScript(value: unknown): string {
 
 const MODEL_COLORS = ['#f97316', '#7c6af7', '#5eead4', '#4ade80', '#f472b6', '#60a5fa', '#fbbf24'];
 
+interface QuotaProjection {
+  ratePerHour: number;   // percentage points of the window consumed per hour
+  projectedPct: number;  // extrapolated utilization at the window's reset, in %
+  fullInMs: number | null; // ms until 100% at the current rate, or null if the window resets first
+}
+
+// Project a rolling quota window forward from its authoritative utilization and
+// reset time — no JSONL estimate involved. If x% is used and the window has been
+// open for h hours (reset time minus the window length gives its start), the rate
+// is x/h per hour and the utilization at reset extrapolates to x·(window/elapsed).
+// Returns null too early in a window to extrapolate, or with nothing used yet.
+function projectQuota(util: number, resetAt: Date, windowMs: number): QuotaProjection | null {
+  const now = Date.now();
+  const elapsed = now - (resetAt.getTime() - windowMs);
+  if (elapsed <= 60_000 || util <= 0) return null;
+  const ratePerHour = (util / elapsed) * 3_600_000 * 100;
+  const projectedPct = Math.min((util * windowMs) / elapsed, 9.99) * 100;
+  const remaining = resetAt.getTime() - now;
+  const msToFull = util < 1 ? ((1 - util) * elapsed) / util : 0;
+  return {
+    ratePerHour,
+    projectedPct,
+    fullInMs: util < 1 && msToFull < remaining ? msToFull : null,
+  };
+}
+
+function humanDur(ms: number): string {
+  const m = Math.max(0, Math.round(ms / 60_000));
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+// One projection line for a quota card: rate, extrapolated end-of-window %, and a
+// time-to-full warning when the window is on track to cap before it resets.
+function projectionLine(p: QuotaProjection | null): string {
+  if (!p) return '';
+  const full = p.fullInMs !== null
+    ? ` <span class="proj-warn">⚠ full in ${humanDur(p.fullInMs)}</span>`
+    : '';
+  return `<div class="quota-proj">~${p.ratePerHour.toFixed(0)}%/h · ~${p.projectedPct.toFixed(0)}% by reset${full}</div>`;
+}
+
 function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaData | null): string {
   const iconUri = extensionUri
     ? webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'icon.png'))
@@ -373,6 +415,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
 .q-fill.warn   { background: linear-gradient(90deg, var(--amber), #f59e0b); }
 .q-fill.danger { background: linear-gradient(90deg, var(--rose), #ef4444); }
 .quota-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.quota-proj { font-size: 10.5px; color: var(--muted); margin-top: 6px; opacity: .85; }
+.proj-warn { color: var(--rose); font-weight: 600; }
 .quota-pct.ok     { color: var(--accent2); font-weight: 600; }
 .quota-pct.warn   { color: var(--amber); font-weight: 600; }
 .quota-pct.danger { color: var(--rose); font-weight: 600; }
@@ -516,7 +560,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
         <div class="quota-cost">${money(summary.lastFiveHours.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastFiveHours.tokens)} tokens</div>
         ${quota ? `<div class="q-track"><div class="q-fill ${fiveClass}" style="width:${fivePct}%"></div></div>
-        <div class="quota-footer"><span>${timeUntil(quota.fiveHourResetAt)}</span>${fmtPct(fivePct, fiveClass)}</div>` : ''}
+        <div class="quota-footer"><span>${timeUntil(quota.fiveHourResetAt)}</span>${fmtPct(fivePct, fiveClass)}</div>
+        ${projectionLine(projectQuota(quota.fiveHourUtilization, quota.fiveHourResetAt, 5 * 3600_000))}` : ''}
       </div>
       <div class="quota-card" style="animation-delay:60ms">
         <div class="quota-card-header">
@@ -526,7 +571,8 @@ body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-s
         <div class="quota-cost">${money(summary.lastWeek.cost)}</div>
         <div class="quota-tokens">${formatTokenCount(summary.lastWeek.tokens)} tokens</div>
         ${quota ? `<div class="q-track"><div class="q-fill ${sevenClass}" style="width:${sevenPct}%"></div></div>
-        <div class="quota-footer"><span>${timeUntil(quota.sevenDayResetAt)}</span>${fmtPct(sevenPct, sevenClass)}</div>` : ''}
+        <div class="quota-footer"><span>${timeUntil(quota.sevenDayResetAt)}</span>${fmtPct(sevenPct, sevenClass)}</div>
+        ${projectionLine(projectQuota(quota.sevenDayUtilization, quota.sevenDayResetAt, 7 * 86400_000))}` : ''}
       </div>
       <div class="quota-card" style="animation-delay:120ms">
         <div class="quota-card-header">
