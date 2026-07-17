@@ -9,11 +9,14 @@ const C_RED    = '#f87171';
 const BAR_FULL  = '█';
 const BAR_EMPTY = '░';
 
-// VS Code lays a status bar item out as a flex row, which collapses a run of plain
-// spaces down to one even though the CSS asks for white-space: pre
-// (microsoft/vscode#145852). A lone space is never collapsed, so only the wider
-// separators between groups need non-breaking spaces to survive.
-const GAP = '\u00a0\u00a0\u00a0';
+// The cost, 5h and 7d groups render as three separate status bar items, and VS
+// Code already lays a small gap between adjacent items. GAP is the extra breath in
+// front of each window item on top of that. One non-breaking space is enough: the
+// per-window tint and the \u300c\u300dbrackets already mark where one group ends, so the
+// three sit tight and read as a single unit rather than three scattered blocks. A
+// non-breaking space (not a plain one) because a flex row collapses a run of plain
+// spaces to one (microsoft/vscode#145852); nbsp survives, and one is never at risk.
+const GAP = '\u00a0';
 
 type StatusFormat = 'compact' | 'bar' | 'cost';
 

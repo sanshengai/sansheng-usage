@@ -113,6 +113,22 @@ function escHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// JSON destined for an inline <script> block. Plain JSON.stringify leaves '<' and
+// '>' intact, so a session title (which the user controls by renaming a Claude
+// Code conversation) containing "</script>" would close the block early and let
+// the rest execute as markup. Escaping the three HTML-significant characters to
+// their \uXXXX forms keeps the text valid JSON while making it impossible to
+// break out of the script context; the two line-separator code points are
+// escaped too, since they are valid JSON but illegal in a JS string literal.
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
 const MODEL_COLORS = ['#f97316', '#7c6af7', '#5eead4', '#4ade80', '#f472b6', '#60a5fa', '#fbbf24'];
 
 function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaData | null): string {
@@ -189,8 +205,8 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
     }).join('');
   }
 
-  // JSON for JS sort/filter
-  const projectsJson = JSON.stringify(byProject.slice(0, 30).map(p => ({
+  // JSON for JS sort/filter — script-safe because it lands inside an inline <script>.
+  const projectsJson = jsonForScript(byProject.slice(0, 30).map(p => ({
     color: projectColor(p.displayName),
     name: p.displayName,
     sessions: p.sessionCount,
@@ -203,7 +219,7 @@ function getHtml(webview: vscode.Webview, summary: UsageSummary, quota: QuotaDat
   // The dot stays coloured by project so sessions of one project still read as a
   // group; only the label switches to the conversation title.
   const showTitles = vscode.workspace.getConfiguration('clusage').get<boolean>('sessions.showTitles', true);
-  const sessionsJson = JSON.stringify(recentSessions.map(s => ({
+  const sessionsJson = jsonForScript(recentSessions.map(s => ({
     color: projectColor(s.displayName),
     project: s.displayName,
     name: (showTitles && s.title) ? s.title : s.displayName,
