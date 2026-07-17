@@ -6,6 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and
 
 ---
 
+## [叁笙 fork · 未发布]
+
+本 fork（叁笙用量）相对上游 clusage 5.0.1 的改动，按主题汇总（对外正式发版时归入 1.0.0）：
+
+### 新增
+- 状态栏三形态（compact / bar / cost）与每形态可配
+- 5h / 7d 分窗**三档独立变色**（70 琥珀 / 80 橙 / 90 红），花费永不变色；可整体关闭变色
+- reset 倒计时（「」贴窗口标签）与今日 token 后缀
+- 会话按对话标题标注；会话徽章按「本人正在对话的模型」归属（subagent 不再抢徽章）
+- `clusage.hideCost` 一键隐藏所有美元金额（含 DOM 源）
+- 看板 5h / 7d **燃烧率与触顶预测**（基于官方额度，非估算）
+- 看板**缓存命中率**与 **90 天活动热力图**
+- **statusline 桥**：零请求、零 ToS 的额度源 + 「安装 statusline 桥」命令（转发不顶掉已有 statusline），并带来上下文占用%
+- 全中文界面
+
+### 变更
+- 额度数据源从「发 1-token 计费请求读响应头」改为**只读 `/api/oauth/usage` 端点**（带 UA 避 429、180s 缓存、遵守 Retry-After），并以 statusline 桥为首选、端点为兜底
+- 扫描改为**按 mtime 增量缓存**：大历史下的重复扫描快约两个数量级（实测 26.6s → 0.3s）
+
+### 修复
+- 看板会话标题注入内联 `<script>` 的 XSS（转义 + 待补 CSP）
+- 关闭已 dispose 的看板面板时不再抛「Webview is disposed」
+- Windows 项目路径在看板里正确缩短
+- parser 单目录/超大文件故障隔离，不再让整个面板归零
+
+---
+
 ## [5.0.1] - 2026-06-10
 
 ### Added
