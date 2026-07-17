@@ -8,6 +8,12 @@
 
 ---
 
+![状态栏：花费 + 5h/7d 额度进度条与重置倒计时](https://sanshengai.top/sansheng-usage/statusbar.png)
+
+![看板总览：今日/累计花费与 Token、燃烧率触顶预测、90 天活动热力图](https://sanshengai.top/sansheng-usage/overview.png)
+
+![项目看板：按项目拆解花费，可排序可筛选](https://sanshengai.top/sansheng-usage/projects.png)
+
 ## 能做什么
 
 **状态栏**（一眼看用量）
