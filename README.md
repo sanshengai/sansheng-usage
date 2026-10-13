@@ -1,5 +1,7 @@
 # 叁笙用量 · Claude Code 用量监控
 
+**中文** | [English](./README_EN.md)
+
 在 VS Code 状态栏和一个中文看板里，实时看清 Claude Code 的花费、token 和额度。
 
 > **非 Anthropic 官方产品，与 Anthropic 无隶属关系。** 「Claude」「Claude Code」为 Anthropic 商标，此处仅用于说明本扩展的适用对象（for Claude Code）。
